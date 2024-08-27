@@ -42,9 +42,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 dataset_all = load_dataset("PolyAI/banking77")
 # Select the train split
 dataset_all = dataset_all['train']
-
+model = get_model_bert("sharmax-vikas/bert-base-banking77-pt2", mask_layer)
 for j in range(0,77):
-    model = get_model_bert("sharmax-vikas/bert-base-banking77-pt2", mask_layer)
+    
     # model = AutoModelForSequenceClassification.from_pretrained("fabriceyhc/bert-base-uncased-dbpedia_14")
     dataset = dataset_all.filter(lambda x: x['label'] in [j])
     dataset_complement = dataset_all.filter(lambda x: x['label'] not in [j])
