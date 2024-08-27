@@ -4,3 +4,4 @@ model_weights/
 *.bin
 *.pth
 *.csv
+*.pkl
