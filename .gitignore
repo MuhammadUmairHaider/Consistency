@@ -1,0 +1,6 @@
+model_weights/
+*.json
+*.pt
+*.bin
+*.pth
+*.csv
