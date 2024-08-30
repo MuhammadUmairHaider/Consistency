@@ -6,7 +6,7 @@ from prettytable import PrettyTable
 # from model_distill_bert import getmodel
 from utilities import compute_accuracy, compute_masks, mask_distillbert, get_model_distilbert, record_activations
 
-batch_size = 128
+batch_size = 256
 mask_layer = 5
 text_tag = "sentence"
 compliment = True
