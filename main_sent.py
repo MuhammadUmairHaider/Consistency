@@ -4,14 +4,14 @@ from tqdm import tqdm
 import torch
 from prettytable import PrettyTable
 # from model_distill_bert import getmodel
-from utilities import compute_accuracy, compute_masks, mask, get_model
+from utilities import compute_accuracy, compute_masks, mask_distillbert, get_model_distilbert
 
-
+mask_layer = 3
 compliment = True
 text_tag = 'text'
 results_table = PrettyTable()
 if(compliment):
-   results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "STD Accuracy", "STD Confidence", "STD compliment ACC", "STD compliment Conf", "Total Masked"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
+   results_table.field_names = results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "STD Accuracy", "STD Confidence", "STD compliment ACC", "STD compliment Conf", "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf", "Total Masked", "Intersedction"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
 # results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "STD Accuracy", "STD Confidence", "Same as Max"]#, "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"]
 
 class_labels = []
@@ -42,8 +42,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 dataset_all = load_dataset("dair-ai/emotion")
 
 for j in range(0,7):
-    model = get_model("esuriddick/distilbert-base-uncased-finetuned-emotion")
-    model.distilbert.transformer.m_layer = 5
+    model = get_model_distilbert("esuriddick/distilbert-base-uncased-finetuned-emotion", mask_layer)
     dataset = dataset_all.filter(lambda x: x['label'] in [j])
     dataset_complement = dataset_all.filter(lambda x: x['label'] not in [j])
     
@@ -73,7 +72,7 @@ for j in range(0,7):
             text = dataset[i]['text']
             inputs = tokenizer(text, return_tensors="pt").to(device)
             outputs = model(**inputs)
-            fc_vals.append(outputs[1].squeeze().cpu().numpy())
+            fc_vals.append(outputs[1][mask_layer+1][:, 0].squeeze().cpu().numpy())
             progress_bar.update(1)
         progress_bar.close()
 
@@ -82,11 +81,11 @@ for j in range(0,7):
     mask_max, mask_std,mask_intersection, mask_max_low_std, mask_std_high_max = compute_masks(fc_vals,0.15)
     mask_std = mask_max_low_std
     print("Masking STD...")
-    model = mask(model,mask_std)
+    model = mask_distillbert(model,mask_std)
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
     print("Total Masked :", t)
     total_masked.append(t)
-    diff_from_max.append(115-(mask_std.shape[0]-torch.count_nonzero(mask_std)))
+    diff_from_max.append(int((torch.logical_or(mask_std, mask_max) == 0).sum().item()))
     acc = compute_accuracy(dataset, model, tokenizer, text_tag)
     print("accuracy after masking STD: ", acc)
     std_accuracies.append(acc[0])
@@ -97,16 +96,16 @@ for j in range(0,7):
         std_comp_acc.append(acc[0])
         std_comp_conf.append(acc[1])
 
-    # print("Masking MAX...")
-    # model = mask(model,mask_max)
-    # acc = compute_accuracy(dataset, model, tokenizer, text_tag)
-    # print("accuracy after masking MAX: ", acc)
-    # max_accuracies.append(acc[0])
-    # max_confidences.append(acc[1])
-    # acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag)
-    # print("accuracy after masking MAX on complement: ", acc)
-    # max_comp_acc.append(acc[0])
-    # max_comp_conf.append(acc[1])
+    print("Masking MAX...")
+    model = mask_distillbert(model,mask_max)
+    acc = compute_accuracy(dataset, model, tokenizer, text_tag)
+    print("accuracy after masking MAX: ", acc)
+    max_accuracies.append(acc[0])
+    max_confidences.append(acc[1])
+    acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag)
+    print("accuracy after masking MAX on complement: ", acc)
+    max_comp_acc.append(acc[0])
+    max_comp_conf.append(acc[1])
     if(compliment):
         results_table.add_row([
             class_labels[j],
@@ -118,12 +117,12 @@ for j in range(0,7):
             std_confidences[j],
             std_comp_acc[j],
             std_comp_conf[j],
-            # max_accuracies[j],
-            # max_confidences[j],
-            # max_comp_acc[j],
-            # max_comp_conf[j],
+            max_accuracies[j],
+            max_confidences[j],
+            max_comp_acc[j],
+            max_comp_conf[j],
             total_masked[j],
-            # diff_from_max[j]
+            diff_from_max[j]
         ])
     # results_table.add_row([
     #     class_labels[j],

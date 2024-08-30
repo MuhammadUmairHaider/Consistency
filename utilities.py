@@ -7,29 +7,87 @@ from models.bert import BertForSequenceClassification
 import os
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-def compute_accuracy(dataset, model, tokenizer, text_tag):
+# def compute_accuracy(dataset, model, tokenizer, text_tag):
+#     correct = 0
+#     total_confidence = 0.0
+#     progress_bar = tqdm(total=len(dataset))
+#     model.to(device)
+#     model.eval()  # Set the model to evaluation mode
+#     with torch.no_grad():  # Disable gradient computation
+#         for i in range(len(dataset)):
+#             text = dataset[i][text_tag]
+#             inputs = tokenizer(text, return_tensors="pt", max_length = 512).to(device)
+#             outputs = model(**inputs)
+#             predictions = torch.nn.functional.softmax(outputs[0], dim=-1)
+#             predicted_class_idx = torch.argmax(predictions).item()
+#             if predicted_class_idx == dataset[i]['label']:
+#                 correct += 1
+#                 total_confidence += predictions[0][predicted_class_idx].item()
+#             progress_bar.update(1)
+#     progress_bar.close()
+    
+#     accuracy = correct / len(dataset)
+#     average_confidence = total_confidence / correct if correct > 0 else 0.0
+    
+#     return round(accuracy,4), round(average_confidence,4)
+
+
+def compute_accuracy(dataset, model, tokenizer, text_tag='sentence', batch_size=32):
     correct = 0
     total_confidence = 0.0
-    progress_bar = tqdm(total=len(dataset))
+    total_samples = len(dataset)
+    progress_bar = tqdm(total=total_samples)
     model.to(device)
     model.eval()  # Set the model to evaluation mode
+
+    i = 0
     with torch.no_grad():  # Disable gradient computation
-        for i in range(len(dataset)):
-            text = dataset[i][text_tag]
-            inputs = tokenizer(text, return_tensors="pt", max_length = 512).to(device)
+        for i in range(0, total_samples, min(batch_size, total_samples-i)):
+            batch = dataset[i:min(i+batch_size, total_samples)]
+            texts = batch[text_tag]
+            labels = torch.tensor(batch['label']).to(device)
+            
+            inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=512).to(device)
             outputs = model(**inputs)
             predictions = torch.nn.functional.softmax(outputs[0], dim=-1)
-            predicted_class_idx = torch.argmax(predictions).item()
-            if predicted_class_idx == dataset[i]['label']:
-                correct += 1
-                total_confidence += predictions[0][predicted_class_idx].item()
-            progress_bar.update(1)
+            predicted_class_idx = torch.argmax(predictions, dim=-1)
+            
+            
+            batch_correct = (predicted_class_idx == labels)
+            correct += batch_correct.sum().item()
+
+            # Sum only the predicted class's probability for correct predictions
+            total_confidence += predictions[batch_correct, predicted_class_idx[batch_correct]].sum().item()
+            
+            progress_bar.update(len(texts))
+    print(i, total_samples)
     progress_bar.close()
     
-    accuracy = correct / len(dataset)
-    average_confidence = total_confidence / correct if correct > 0 else 0.0
+    accuracy = correct / total_samples
+    average_confidence = total_confidence / correct
     
-    return round(accuracy,4), round(average_confidence,4)
+    return round(accuracy, 4), round(average_confidence, 4)
+
+def record_activations(dataset, model, tokenizer, text_tag='sentence', batch_size=32, mask_layer=0):
+    total_samples = len(dataset)
+    progress_bar = tqdm(total=total_samples)
+    model.to(device)
+    model.eval()  # Set the model to evaluation mode
+    fc_vals = []
+    i = 0
+    with torch.no_grad():
+        for i in range(0, total_samples, min(batch_size, total_samples-i)):
+            batch = dataset[i:min(i+batch_size, total_samples)]
+            texts = batch[text_tag]
+
+            inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=512).to(device)
+            outputs = model(**inputs)
+            
+            fc_vals.extend(outputs[1][mask_layer+1][:, 0].squeeze().cpu().numpy())
+            progress_bar.update(len(texts))
+    progress_bar.close()
+        
+    return fc_vals
 def get_model_distilbert(directory_path, layer):
     base_path = os.path.join("model_weights", directory_path)
     if not os.path.exists(base_path):
@@ -91,9 +149,10 @@ def compute_masks(fc_vals, percent):
     mask_std = compute_std_mask(std_vals_tensor, percent)
     mask_max_low_std = compute_max_low_std_mask(mean_vals_tensor, std_vals_tensor, percent)
     mask_std_high_max = compute_std_high_max_mask(mean_vals_tensor, std_vals_tensor, percent)
+    mask_max_high_std = comute_max_high_std_mask(mean_vals_tensor, std_vals_tensor, percent)
     mask_intersection = mask_max * mask_std
     
-    return mask_max, mask_std, mask_intersection, mask_max_low_std, mask_std_high_max
+    return mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max
 
 def compute_max_mask(values, percent):
     sorted_indices = torch.argsort(values, descending=True)
@@ -108,6 +167,22 @@ def compute_std_mask(values, percent):
     mask = torch.ones_like(values)
     mask[sorted_indices[:mask_count]] = 0.0
     return mask
+
+def comute_max_high_std_mask(mean_vals, std_vals, percent):
+    # Get indices of top 50% std values
+    top_50_percent_std_count = int(0.30 * len(std_vals))
+    top_50_percent_std_indices = torch.argsort(std_vals, descending=True)[:top_50_percent_std_count]
+    
+    # Create a mask for top 50% std values
+    top_50_percent_std_mask = torch.zeros_like(std_vals, dtype=torch.bool)
+    top_50_percent_std_mask[top_50_percent_std_indices] = True
+    
+    # Filter mean values
+    mean_vals_filtered = mean_vals.clone()
+    mean_vals_filtered[~top_50_percent_std_mask] = float('-inf')
+    
+    # Compute mask
+    return compute_max_mask(mean_vals_filtered, percent)
 
 def compute_max_low_std_mask(mean_vals, std_vals, percent):
     # Get indices of bottom 50% std values

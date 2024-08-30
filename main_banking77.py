@@ -82,7 +82,7 @@ for j in range(0,77):
 
         
     mask_max, mask_std,mask_intersection, mask_max_low_std, mask_std_high_max = compute_masks(fc_vals,0.30)
-    # mask_std = mask_max_low_std
+    mask_std = mask_max_low_std
     print("Masking STD...")
     model = mask_bert(model,mask_std)
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))

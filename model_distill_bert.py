@@ -46,10 +46,11 @@ class CustomModel(nn.Module):
         hidden_state = distilbert_output[0]  # (bs, seq_len, dim)
         hidden_state = hidden_state
         # print(hidden_state.shape)
-        pooled_output = hidden_state[:, 0]  # (bs, dim)
+        pooled_output1 = hidden_state[:, 0]  # (bs, dim)
+        pooled_output = pooled_output1 * self.masking_layer
         # print(pooled_output.shape)
-        pooled_output1 = self.model.pre_classifier(pooled_output)  # (bs, dim)
-        pooled_output = nn.ReLU()(pooled_output1) * self.masking_layer # (bs, dim)
+        pooled_output = self.model.pre_classifier(pooled_output)  # (bs, dim)
+        pooled_output = nn.ReLU()(pooled_output) # (bs, dim)
         # pooled_output = self.model.dropout(pooled_output)  # (bs, dim)
         logits = self.model.classifier(pooled_output)  # (bs, num_labels)
 

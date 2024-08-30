@@ -3,16 +3,16 @@ from datasets import load_dataset
 from tqdm import tqdm
 import torch
 from prettytable import PrettyTable
-from model_distill_bert import getmodel
-from utilities import compute_accuracy, compute_masks, mask
+# from model_distill_bert import getmodel
+from utilities import compute_accuracy, compute_masks, mask_distillbert, get_model_distilbert
 
 
-compliment = True
-
+mask_layer = 5
 text_tag = "text"
+compliment = True
 results_table = PrettyTable()
 if(compliment):
-   results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "STD Accuracy", "STD Confidence", "STD compliment ACC", "STD compliment Conf","MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf", "Total Masked"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
+   results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "STD Accuracy", "STD Confidence", "STD compliment ACC", "STD compliment Conf", "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf", "Total Masked", "Intersedction"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
 # results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "STD Accuracy", "STD Confidence", "Same as Max"]#, "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"]
 
 class_labels = []
@@ -44,23 +44,13 @@ dataset_all = load_dataset("clinc/clinc_oos", "plus")
 # Select the train split
 dataset_all = dataset_all['train'].rename_column('intent', 'label')
 
-# Filter Classes
-# class_label:
-    # names:
-    #     '0': sadness
-    #     '1': joy
-    #     '2': love
-    #     '3': anger
-    #     '4': fear
-    #     '5': surprise
-    
-
+model = get_model_distilbert("transformersbook/distilbert-base-uncased-distilled-clinc", mask_layer)
 for j in range(0,150):
-    model = getmodel("transformersbook/distilbert-base-uncased-distilled-clinc")
+    
     dataset = dataset_all.filter(lambda x: x['label'] in [j])
     dataset_complement = dataset_all.filter(lambda x: x['label'] not in [j])
     
-    if(j==6):
+    if(j==149):
         dataset = dataset_all
 
     class_labels.append(f"Class {j}")
@@ -86,16 +76,16 @@ for j in range(0,150):
             text = dataset[i][text_tag]
             inputs = tokenizer(text, return_tensors="pt", max_length = 512).to(device)
             outputs = model(**inputs)
-            fc_vals.append(outputs[1].squeeze().cpu().numpy())
+            fc_vals.append(outputs[1][mask_layer+1][:, 0].squeeze().cpu().numpy())
             progress_bar.update(1)
         progress_bar.close()
 
 
         
     mask_max, mask_std,mask_intersection, mask_max_low_std, mask_std_high_max = compute_masks(fc_vals,0.30)
-    # mask_std = mask_max_low_std
+    mask_std = mask_max_low_std
     print("Masking STD...")
-    model = mask(model,mask_std)
+    model = mask_distillbert(model,mask_std)
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
     print("Total Masked :", t)
     total_masked.append(t)
@@ -111,7 +101,7 @@ for j in range(0,150):
         std_comp_conf.append(acc[1])
 
     print("Masking MAX...")
-    model = mask(model,mask_max)
+    model = mask_distillbert(model,mask_max)
     t = int(mask_max.shape[0]-torch.count_nonzero(mask_max))
     print("Total Masked :", t)
     total_masked.append(t)
@@ -123,6 +113,8 @@ for j in range(0,150):
     print("accuracy after masking MAX on complement: ", acc)
     max_comp_acc.append(acc[0])
     max_comp_conf.append(acc[1])
+
+    diff_from_max.append(int((torch.logical_or(mask_std, mask_max) == 0).sum().item()))
     if(compliment):
         results_table.add_row([
             class_labels[j],
@@ -139,7 +131,7 @@ for j in range(0,150):
             max_comp_acc[j],
             max_comp_conf[j],
             total_masked[j],
-            # diff_from_max[j]
+            diff_from_max[j]
         ])
     # results_table.add_row([
     #     class_labels[j],
@@ -153,3 +145,6 @@ for j in range(0,150):
     # ])
 
 print(results_table)
+
+
+#low_std_max in second terminal

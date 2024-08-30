@@ -3,14 +3,16 @@ from datasets import load_dataset
 from tqdm import tqdm
 import torch
 from prettytable import PrettyTable
-from model_distill_bert import getmodel
-from utilities import compute_accuracy, compute_masks, mask
+# from model_distill_bert import getmodel
+from utilities import compute_accuracy, compute_masks, mask_distillbert, get_model_distilbert, record_activations
 
+batch_size = 128
+mask_layer = 5
 text_tag = "sentence"
 compliment = True
 results_table = PrettyTable()
 if(compliment):
-   results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "STD Accuracy", "STD Confidence", "STD compliment ACC", "STD compliment Conf", "Total Masked", "Intersection"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
+   results_table.field_names = results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "STD Accuracy", "STD Confidence", "STD compliment ACC", "STD compliment Conf", "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf", "Total Masked", "Intersedction"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
 # results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "STD Accuracy", "STD Confidence", "Same as Max"]#, "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"]
 
 class_labels = []
@@ -41,44 +43,22 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 dataset_all = load_dataset("stanfordnlp/sst2")
 # Select the train split
 dataset_all = dataset_all['train']
-
-# Filter Classes
-# class_label:
-    # names:
-    #     '0': sadness
-    #     '1': joy
-    #     '2': love
-    #     '3': anger
-    #     '4': fear
-    #     '5': surprise
+model = get_model_distilbert("distilbert-base-uncased-finetuned-sst-2-english", mask_layer)
+for j in range(0,3):
     
-
-    
-
-
-per = [0.21484375,
-0.2213541667,
-0.2109375,
-0.2265625,
-0.2005208333,
-0.2083333333,
-0.2786458333]
-
-for j in range(0,2):
-    model = getmodel("distilbert-base-uncased-finetuned-sst-2-english")
     dataset = dataset_all.filter(lambda x: x['label'] in [j])
     dataset_complement = dataset_all.filter(lambda x: x['label'] not in [j])
     
-    if(j==6):
+    if(j==2):
         dataset = dataset_all
 
     class_labels.append(f"Class {j}")
-    acc = compute_accuracy(dataset, model, tokenizer, text_tag)
+    acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size)
     print("Class ",j, "base accuracy: ", acc)
     base_accuracies.append(acc[0])
     base_confidences.append(acc[1])
     if(compliment):
-        acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag)
+        acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag , batch_size=batch_size)
         print("Class ",j, "complement base accuracy: ", acc)
         base_comp_acc.append(acc[0])
         base_comp_conf.append(acc[1])
@@ -86,52 +66,53 @@ for j in range(0,2):
 
     #record the activations of the first fully connected layer, CLS tokken
     print("Recording activations...")
-    progress_bar = tqdm(total=len(dataset))
-    model.to(device)
-    model.eval()
-    fc_vals = []
-    with torch.no_grad():
-        for i in range(len(dataset)):
-            text = dataset[i]['sentence']
-            inputs = tokenizer(text, return_tensors="pt").to(device)
-            outputs = model(**inputs)
-            fc_vals.append(outputs[1].squeeze().cpu().numpy())
-            progress_bar.update(1)
-        progress_bar.close()
+    # progress_bar = tqdm(total=len(dataset))
+    # model.to(device)
+    # model.eval()
+    # fc_vals = []
+    # with torch.no_grad():
+    #     for i in range(len(dataset)):
+    #         text = dataset[i]['sentence']
+    #         inputs = tokenizer(text, return_tensors="pt").to(device)
+    #         outputs = model(**inputs)
+    #         fc_vals.append(outputs[1][mask_layer+1][:, 0].squeeze().cpu().numpy())
+    #         progress_bar.update(1)
+    #     progress_bar.close()
 
+    fc_vals = record_activations(dataset, model, tokenizer, text_tag=text_tag, mask_layer=mask_layer, batch_size=batch_size)
 
         
-    mask_max, mask_std,mask_intersection, mask_max_low_std, mask_std_high_max = compute_masks(fc_vals,0.30)
-    # mask_std = mask_max_low_std
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.50)
+    mask_std = mask_std_high_max
     print("Masking STD...")
-    model = mask(model,mask_std)
+    model = mask_distillbert(model,mask_std)
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
     print("Total Masked :", t)
     total_masked.append(t)
     diff_from_max.append(int((torch.logical_or(mask_std, mask_max) == 0).sum().item()))
-    acc = compute_accuracy(dataset, model, tokenizer, text_tag)
+    acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size) 
     print("accuracy after masking STD: ", acc)
     std_accuracies.append(acc[0])
     std_confidences.append(acc[1])
-    if(compliment):
-        acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag)
-        print("accuracy after masking STD on complement: ", acc)
-        std_comp_acc.append(acc[0])
-        std_comp_conf.append(acc[1])
+    # if(compliment):
+    #     acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag, batch_size=batch_size)
+    #     print("accuracy after masking STD on complement: ", acc)
+    #     std_comp_acc.append(acc[0])
+    #     std_comp_conf.append(acc[1])
 
-    # print("Masking MAX...")
-    # model = mask(model,mask_max)
-    # t = int(mask_max.shape[0]-torch.count_nonzero(mask_max))
-    # print("Total Masked :", t)
+    print("Masking MAX...")
+    model = mask_distillbert(model,mask_max)
+    t = int(mask_max.shape[0]-torch.count_nonzero(mask_max))
+    print("Total Masked :", t)
     # total_masked.append(t)
-    # acc = compute_accuracy(dataset, model, tokenizer, text_tag)
-    # print("accuracy after masking MAX: ", acc)
-    # max_accuracies.append(acc[0])
-    # max_confidences.append(acc[1])
-    # acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag)
-    # print("accuracy after masking MAX on complement: ", acc)
-    # max_comp_acc.append(acc[0])
-    # max_comp_conf.append(acc[1])
+    acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size)
+    print("accuracy after masking MAX: ", acc)
+    max_accuracies.append(acc[0])
+    max_confidences.append(acc[1])
+    acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag, batch_size=batch_size)
+    print("accuracy after masking MAX on complement: ", acc)
+    max_comp_acc.append(acc[0])
+    max_comp_conf.append(acc[1])
     if(compliment):
         results_table.add_row([
             class_labels[j],
@@ -143,10 +124,10 @@ for j in range(0,2):
             std_confidences[j],
             std_comp_acc[j],
             std_comp_conf[j],
-            # max_accuracies[j],
-            # max_confidences[j],
-            # max_comp_acc[j],
-            # max_comp_conf[j],
+            max_accuracies[j],
+            max_confidences[j],
+            max_comp_acc[j],
+            max_comp_conf[j],
             total_masked[j],
             diff_from_max[j]
         ])
