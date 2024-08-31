@@ -6,7 +6,7 @@ from prettytable import PrettyTable
 # from model_distill_bert import getmodel
 from utilities import compute_accuracy, compute_masks, mask_distillbert, get_model_distilbert, record_activations
 
-batch_size = 256
+batch_size = 512
 mask_layer = 5
 text_tag = "sentence"
 compliment = True
@@ -45,7 +45,7 @@ dataset_all = load_dataset("stanfordnlp/sst2")
 dataset_all = dataset_all['train']
 model = get_model_distilbert("distilbert-base-uncased-finetuned-sst-2-english", mask_layer)
 for j in range(0,3):
-    
+    model = mask_distillbert(model, torch.ones(768))
     dataset = dataset_all.filter(lambda x: x['label'] in [j])
     dataset_complement = dataset_all.filter(lambda x: x['label'] not in [j])
     
@@ -82,7 +82,7 @@ for j in range(0,3):
     fc_vals = record_activations(dataset, model, tokenizer, text_tag=text_tag, mask_layer=mask_layer, batch_size=batch_size)
 
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.50)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.30)
     mask_std = mask_std_high_max
     print("Masking STD...")
     model = mask_distillbert(model,mask_std)
@@ -94,11 +94,11 @@ for j in range(0,3):
     print("accuracy after masking STD: ", acc)
     std_accuracies.append(acc[0])
     std_confidences.append(acc[1])
-    # if(compliment):
-    #     acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag, batch_size=batch_size)
-    #     print("accuracy after masking STD on complement: ", acc)
-    #     std_comp_acc.append(acc[0])
-    #     std_comp_conf.append(acc[1])
+    if(compliment):
+        acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag, batch_size=batch_size)
+        print("accuracy after masking STD on complement: ", acc)
+        std_comp_acc.append(acc[0])
+        std_comp_conf.append(acc[1])
 
     print("Masking MAX...")
     model = mask_distillbert(model,mask_max)

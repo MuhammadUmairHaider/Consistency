@@ -170,7 +170,7 @@ def compute_std_mask(values, percent):
 
 def comute_max_high_std_mask(mean_vals, std_vals, percent):
     # Get indices of top 50% std values
-    top_50_percent_std_count = int(0.30 * len(std_vals))
+    top_50_percent_std_count = int(0.50 * len(std_vals))
     top_50_percent_std_indices = torch.argsort(std_vals, descending=True)[:top_50_percent_std_count]
     
     # Create a mask for top 50% std values
