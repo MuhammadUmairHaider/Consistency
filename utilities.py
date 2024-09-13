@@ -7,29 +7,6 @@ from models.bert import BertForSequenceClassification
 import os
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# def compute_accuracy(dataset, model, tokenizer, text_tag):
-#     correct = 0
-#     total_confidence = 0.0
-#     progress_bar = tqdm(total=len(dataset))
-#     model.to(device)
-#     model.eval()  # Set the model to evaluation mode
-#     with torch.no_grad():  # Disable gradient computation
-#         for i in range(len(dataset)):
-#             text = dataset[i][text_tag]
-#             inputs = tokenizer(text, return_tensors="pt", max_length = 512).to(device)
-#             outputs = model(**inputs)
-#             predictions = torch.nn.functional.softmax(outputs[0], dim=-1)
-#             predicted_class_idx = torch.argmax(predictions).item()
-#             if predicted_class_idx == dataset[i]['label']:
-#                 correct += 1
-#                 total_confidence += predictions[0][predicted_class_idx].item()
-#             progress_bar.update(1)
-#     progress_bar.close()
-    
-#     accuracy = correct / len(dataset)
-#     average_confidence = total_confidence / correct if correct > 0 else 0.0
-    
-#     return round(accuracy,4), round(average_confidence,4)
 
 
 def compute_accuracy(dataset, model, tokenizer, text_tag='sentence', batch_size=32):
@@ -41,6 +18,7 @@ def compute_accuracy(dataset, model, tokenizer, text_tag='sentence', batch_size=
     model.eval()  # Set the model to evaluation mode
 
     i = 0
+    conf_label = []
     with torch.no_grad():  # Disable gradient computation
         for i in range(0, total_samples, min(batch_size, total_samples-i)):
             batch = dataset[i:min(i+batch_size, total_samples)]
@@ -52,6 +30,7 @@ def compute_accuracy(dataset, model, tokenizer, text_tag='sentence', batch_size=
             predictions = torch.nn.functional.softmax(outputs[0], dim=-1)
             predicted_class_idx = torch.argmax(predictions, dim=-1)
             
+            conf_label.extend(predictions[range(len(texts)), labels].cpu().numpy())
             
             batch_correct = (predicted_class_idx == labels)
             correct += batch_correct.sum().item()
@@ -169,17 +148,40 @@ def compute_std_mask(values, percent):
     return mask
 
 def comute_max_high_std_mask(mean_vals, std_vals, percent):
+    
+    
+    
+    bottom_50_percent_max_count = int(0.20 * len(mean_vals))
+    bottom_50_percent_max_indices = torch.argsort(mean_vals)[:bottom_50_percent_max_count]
+    
+    # Create a mask for bottom 50% std values
+    bottom_50_percent_max_mask = torch.zeros_like(mean_vals, dtype=torch.bool)
+    bottom_50_percent_max_mask[bottom_50_percent_max_indices] = True
+    
+    # Filter mean values
+    std_vals_filtered = std_vals.clone()
+    std_vals_filtered[bottom_50_percent_max_mask] = float('inf')
+    
+    std_vals = std_vals_filtered
+    
+    
     # Get indices of top 50% std values
-    top_50_percent_std_count = int(0.50 * len(std_vals))
-    top_50_percent_std_indices = torch.argsort(std_vals, descending=True)[:top_50_percent_std_count]
+    top_50_percent_std_count = int(0.3 * len(std_vals))
+    top_50_percent_std_indices = torch.argsort(std_vals)[:top_50_percent_std_count]
+    
+    #random indices
+    random_indices = torch.randperm(len(std_vals))[:top_50_percent_std_count]
     
     # Create a mask for top 50% std values
     top_50_percent_std_mask = torch.zeros_like(std_vals, dtype=torch.bool)
     top_50_percent_std_mask[top_50_percent_std_indices] = True
     
+    
+    
+    
     # Filter mean values
     mean_vals_filtered = mean_vals.clone()
-    mean_vals_filtered[~top_50_percent_std_mask] = float('-inf')
+    mean_vals_filtered[top_50_percent_std_mask] = float('-inf')
     
     # Compute mask
     return compute_max_mask(mean_vals_filtered, percent)
@@ -204,7 +206,7 @@ def compute_max_low_std_mask(mean_vals, std_vals, percent):
 def compute_std_high_max_mask(mean_vals, std_vals, percent):
     # Get indices of bottom 50% std values
     bottom_50_percent_max_count = int(0.50 * len(mean_vals))
-    bottom_50_percent_max_indices = torch.argsort(mean_vals, descending=True)[:bottom_50_percent_max_count]
+    bottom_50_percent_max_indices = torch.argsort(mean_vals)[:bottom_50_percent_max_count]
     
     # Create a mask for bottom 50% std values
     bottom_50_percent_max_mask = torch.zeros_like(mean_vals, dtype=torch.bool)
@@ -212,7 +214,7 @@ def compute_std_high_max_mask(mean_vals, std_vals, percent):
     
     # Filter mean values
     std_vals_filtered = std_vals.clone()
-    std_vals_filtered[~bottom_50_percent_max_mask] = float('inf')
+    std_vals_filtered[bottom_50_percent_max_mask] = float('inf')
     
     # Compute mask
     return compute_std_mask(std_vals_filtered, percent)

@@ -6,7 +6,7 @@ from prettytable import PrettyTable
 # from model_distill_bert import getmodel
 from utilities import compute_accuracy, compute_masks, mask_distillbert, get_model_distilbert, record_activations
 
-batch_size = 512
+batch_size = 256
 mask_layer = 5
 text_tag = "sentence"
 compliment = True
@@ -44,6 +44,7 @@ dataset_all = load_dataset("stanfordnlp/sst2")
 # Select the train split
 dataset_all = dataset_all['train']
 model = get_model_distilbert("distilbert-base-uncased-finetuned-sst-2-english", mask_layer)
+model = torch.compile(model)
 for j in range(0,3):
     model = mask_distillbert(model, torch.ones(768))
     dataset = dataset_all.filter(lambda x: x['label'] in [j])
@@ -82,8 +83,8 @@ for j in range(0,3):
     fc_vals = record_activations(dataset, model, tokenizer, text_tag=text_tag, mask_layer=mask_layer, batch_size=batch_size)
 
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.30)
-    mask_std = mask_std_high_max
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.50)
+    mask_std = mask_max_high_std
     print("Masking STD...")
     model = mask_distillbert(model,mask_std)
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
