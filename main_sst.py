@@ -55,14 +55,16 @@ for j in range(0,3):
 
     class_labels.append(f"Class {j}")
     acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size)
-    print("Class ",j, "base accuracy: ", acc)
+    print("Class ",j, "base accuracy: ", acc[0], acc[1])
     base_accuracies.append(acc[0])
     base_confidences.append(acc[1])
+    aug_dataset = acc[2]
     if(compliment):
         acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag , batch_size=batch_size)
-        print("Class ",j, "complement base accuracy: ", acc)
+        print("Class ",j, "complement base accuracy: ", acc[0], acc[1])
         base_comp_acc.append(acc[0])
         base_comp_conf.append(acc[1])
+        aug_dataset.extend(acc[2])
         
 
     #record the activations of the first fully connected layer, CLS tokken
@@ -91,13 +93,13 @@ for j in range(0,3):
     print("Total Masked :", t)
     total_masked.append(t)
     diff_from_max.append(int((torch.logical_or(mask_std, mask_max) == 0).sum().item()))
-    acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size) 
-    print("accuracy after masking STD: ", acc)
+    acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size, in_aug_dataset=aug_dataset[:len(dataset)]) 
+    print("accuracy after masking STD: ", acc[0], acc[1])
     std_accuracies.append(acc[0])
     std_confidences.append(acc[1])
     if(compliment):
-        acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag, batch_size=batch_size)
-        print("accuracy after masking STD on complement: ", acc)
+        acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag, batch_size=batch_size, in_aug_dataset=aug_dataset[len(dataset):])
+        print("accuracy after masking STD on complement: ", acc[0], acc[1])
         std_comp_acc.append(acc[0])
         std_comp_conf.append(acc[1])
 
@@ -106,12 +108,12 @@ for j in range(0,3):
     t = int(mask_max.shape[0]-torch.count_nonzero(mask_max))
     print("Total Masked :", t)
     # total_masked.append(t)
-    acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size)
-    print("accuracy after masking MAX: ", acc)
+    acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size, in_aug_dataset=aug_dataset[:len(dataset)])
+    print("accuracy after masking MAX: ", acc[0], acc[1])
     max_accuracies.append(acc[0])
     max_confidences.append(acc[1])
-    acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag, batch_size=batch_size)
-    print("accuracy after masking MAX on complement: ", acc)
+    acc = compute_accuracy(dataset_complement, model, tokenizer, text_tag, batch_size=batch_size, in_aug_dataset=aug_dataset[len(dataset):])
+    print("accuracy after masking MAX on complement: ", acc[0], acc[1])
     max_comp_acc.append(acc[0])
     max_comp_conf.append(acc[1])
     if(compliment):

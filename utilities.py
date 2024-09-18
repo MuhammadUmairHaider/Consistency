@@ -8,17 +8,35 @@ import os
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+def calculate_predictions_diff(a, b):
+    return np.sum(np.abs(a - b))
 
-def compute_accuracy(dataset, model, tokenizer, text_tag='sentence', batch_size=32):
+def rank_dataset_by_diff(dataset, in_dataset):
+    for i in range(len(dataset)):
+        dataset[i] = list(dataset[i])  # Convert tuple to list
+        dataset[i][3] = calculate_predictions_diff(dataset[i][2][dataset[i][1]], in_dataset[i][2][dataset[i][1]])  # Modify the value
+        # dataset[i] = tuple(dataset[i]) 
+        
+    sorted_indices = np.argsort([row[3] for row in dataset])
+    # Reorder the list using sorted indices
+    sorted_dataset = [dataset[i] for i in sorted_indices]
+    return sorted_dataset
+        
+
+def compute_accuracy(dataset, model, tokenizer, text_tag='sentence', batch_size=32, in_aug_dataset=[]):
     correct = 0
     total_confidence = 0.0
     total_samples = len(dataset)
     progress_bar = tqdm(total=total_samples)
     model.to(device)
     model.eval()  # Set the model to evaluation mode
-
+    augmented_dataset = []
+    
     i = 0
-    conf_label = []
+    
+    texts_all = []
+    labels_all = []
+    predictions_all = []
     with torch.no_grad():  # Disable gradient computation
         for i in range(0, total_samples, min(batch_size, total_samples-i)):
             batch = dataset[i:min(i+batch_size, total_samples)]
@@ -30,22 +48,29 @@ def compute_accuracy(dataset, model, tokenizer, text_tag='sentence', batch_size=
             predictions = torch.nn.functional.softmax(outputs[0], dim=-1)
             predicted_class_idx = torch.argmax(predictions, dim=-1)
             
-            conf_label.extend(predictions[range(len(texts)), labels].cpu().numpy())
-            
             batch_correct = (predicted_class_idx == labels)
             correct += batch_correct.sum().item()
+            texts_all.extend(texts)
+            labels_all.extend(labels.cpu().numpy())
+            predictions_all.extend(predictions.cpu().numpy())
 
             # Sum only the predicted class's probability for correct predictions
             total_confidence += predictions[batch_correct, predicted_class_idx[batch_correct]].sum().item()
             
             progress_bar.update(len(texts))
+            
+    augmented_dataset = list(zip(texts_all, labels_all, predictions_all, [0]*len(texts_all)))
+    
+    if(in_aug_dataset!=[]):
+        augmented_dataset = rank_dataset_by_diff(augmented_dataset, in_aug_dataset)
+        
     print(i, total_samples)
     progress_bar.close()
     
     accuracy = correct / total_samples
     average_confidence = total_confidence / correct
     
-    return round(accuracy, 4), round(average_confidence, 4)
+    return round(accuracy, 4), round(average_confidence, 4), augmented_dataset
 
 def record_activations(dataset, model, tokenizer, text_tag='sentence', batch_size=32, mask_layer=0):
     total_samples = len(dataset)
@@ -166,7 +191,7 @@ def comute_max_high_std_mask(mean_vals, std_vals, percent):
     
     
     # Get indices of top 50% std values
-    top_50_percent_std_count = int(0.3 * len(std_vals))
+    top_50_percent_std_count = int(0.5* len(std_vals))
     top_50_percent_std_indices = torch.argsort(std_vals)[:top_50_percent_std_count]
     
     #random indices
@@ -205,7 +230,7 @@ def compute_max_low_std_mask(mean_vals, std_vals, percent):
 
 def compute_std_high_max_mask(mean_vals, std_vals, percent):
     # Get indices of bottom 50% std values
-    bottom_50_percent_max_count = int(0.50 * len(mean_vals))
+    bottom_50_percent_max_count = int(0.20 * len(mean_vals))
     bottom_50_percent_max_indices = torch.argsort(mean_vals)[:bottom_50_percent_max_count]
     
     # Create a mask for bottom 50% std values
