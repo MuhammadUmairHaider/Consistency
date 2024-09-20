@@ -573,7 +573,7 @@ class BertEncoder(nn.Module):
         self.config = config
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
-        self.masking_layer = torch.ones(config.hidden_size).to("cuda")
+        self.masking_layer = torch.ones(config.hidden_size, dtype=torch.float32).to("cuda")
         self.m_layer = config.m_layer
 
     def forward(
@@ -634,6 +634,7 @@ class BertEncoder(nn.Module):
                 hidden_states = layer_outputs[0] * self.masking_layer
             else:
                 hidden_states = layer_outputs[0]
+
             if use_cache:
                 next_decoder_cache += (layer_outputs[-1],)
             if output_attentions:

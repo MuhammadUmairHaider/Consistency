@@ -5,7 +5,8 @@ from models.distilbert import DistilBertForSequenceClassification
 from transformers import AutoModelForSequenceClassification
 from models.bert import BertForSequenceClassification
 import os
-
+torch.manual_seed(0)
+np.random.seed(0)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def calculate_predictions_diff(a, b):
@@ -64,11 +65,14 @@ def compute_accuracy(dataset, model, tokenizer, text_tag='sentence', batch_size=
     if(in_aug_dataset!=[]):
         augmented_dataset = rank_dataset_by_diff(augmented_dataset, in_aug_dataset)
         
-    print(i, total_samples)
+    # print(i, total_samples)
     progress_bar.close()
     
     accuracy = correct / total_samples
-    average_confidence = total_confidence / correct
+    if(correct == 0):
+        average_confidence = 0
+    else:
+        average_confidence = total_confidence / correct
     
     return round(accuracy, 4), round(average_confidence, 4), augmented_dataset
 

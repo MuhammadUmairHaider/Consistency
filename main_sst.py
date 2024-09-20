@@ -44,7 +44,7 @@ dataset_all = load_dataset("stanfordnlp/sst2")
 # Select the train split
 dataset_all = dataset_all['train']
 model = get_model_distilbert("distilbert-base-uncased-finetuned-sst-2-english", mask_layer)
-model = torch.compile(model)
+# model = torch.compile(model)
 for j in range(0,3):
     model = mask_distillbert(model, torch.ones(768))
     dataset = dataset_all.filter(lambda x: x['label'] in [j])
@@ -146,3 +146,16 @@ for j in range(0,3):
     # ])
 
 print(results_table)
+
+print("Average Base Accuracy: ", sum(base_accuracies)/len(base_accuracies))
+print("Average Base Confidence: ", sum(base_confidences)/len(base_confidences))
+print("Average STD Accuracy: ", sum(std_accuracies)/len(std_accuracies))
+print("Average STD Confidence: ", sum(std_confidences)/len(std_confidences))
+print("Average MAX Accuracy: ", sum(max_accuracies)/len(max_accuracies))
+print("Average MAX Confidence: ", sum(max_confidences)/len(max_confidences))
+print("Average STD Complement Accuracy: ", sum(std_comp_acc)/len(std_comp_acc))
+print("Average STD Complement Confidence: ", sum(std_comp_conf)/len(std_comp_conf))
+print("Average MAX Complement Accuracy: ", sum(max_comp_acc)/len(max_comp_acc))
+print("Average MAX Complement Confidence: ", sum(max_comp_conf)/len(max_comp_conf))
+print("Average Total Masked: ", sum(total_masked)/len(total_masked))
+print("Average Intersection: ", sum(diff_from_max)/len(diff_from_max))
