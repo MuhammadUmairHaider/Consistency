@@ -45,10 +45,32 @@ dataset_all = load_dataset("PolyAI/banking77")
 # Select the train split
 dataset_all = dataset_all['train']
 
+avg_intersection = []
+model = get_model_bert("sharmax-vikas/bert-base-banking77-pt2", mask_layer)
 for mask_layer in range(0,12):
+    class_labels = []
+    base_accuracies = []
+    base_confidences = []
+    base_comp_acc = []
+    base_comp_conf = []
+    std_masked_counts = []
+    std_accuracies = []
+    std_confidences = []
+    std_comp_acc = []
+    std_comp_conf = []
+    max_masked_counts = []
+    max_accuracies = []
+    max_confidences = []
+    max_comp_acc = []
+    max_comp_conf = []
+    diff_from_max = []
+    total_masked = []
+
+    dataset_list = []
     for j in range(0,77):
         
-        model = get_model_bert("sharmax-vikas/bert-base-banking77-pt2", mask_layer)
+        model = mask_bert(model,torch.ones(768))
+        model.m_layer = mask_layer
         dataset = dataset_all.filter(lambda x: x['label'] in [j])
         dataset_complement = dataset_all.filter(lambda x: x['label'] not in [j])
         
@@ -137,3 +159,6 @@ for mask_layer in range(0,12):
     print("Average MAX Complement Confidence: ", round(sum(max_comp_conf)/len(max_comp_conf), 4))
     print("Average Total Masked: ", round(sum(total_masked)/len(total_masked), 4))
     print("Average Intersection: ", round(sum(diff_from_max)/len(diff_from_max), 4))
+    avg_intersection.append(round(sum(diff_from_max)/len(diff_from_max), 4))
+    
+print(avg_intersection)

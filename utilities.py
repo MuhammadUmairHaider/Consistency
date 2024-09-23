@@ -103,7 +103,7 @@ def get_model_distilbert(directory_path, layer):
 
     weights_path = os.path.join(base_path, "weights.pth")
 
-    model = AutoModelForSequenceClassification.from_pretrained(directory_path)
+    model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased', num_labels=4)
     model.config.m_layer = layer
     #save weights
     torch.save(model.state_dict(), weights_path)
