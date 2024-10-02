@@ -4,6 +4,8 @@ import numpy as np
 from models.distilbert import DistilBertForSequenceClassification
 from transformers import AutoModelForSequenceClassification
 from models.bert import BertForSequenceClassification
+
+from models.distilbert import MaskLayer
 import os
 torch.manual_seed(0)
 np.random.seed(0)
@@ -103,7 +105,8 @@ def get_model_distilbert(directory_path, layer):
 
     weights_path = os.path.join(base_path, "weights.pth")
 
-    model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased', num_labels=4)
+    # model = AutoModelForSequenceClassification.from_pretrained('distilbert-base-uncased', num_labels=4)
+    model = AutoModelForSequenceClassification.from_pretrained(directory_path)
     model.config.m_layer = layer
     #save weights
     torch.save(model.state_dict(), weights_path)
@@ -230,6 +233,36 @@ def compute_max_low_std_mask(mean_vals, std_vals, percent):
     
     # Compute mask
     return compute_max_mask(mean_vals_filtered, percent)
+
+def mask_range_distilbert(model, mask, fc_vals):
+    mean = torch.tensor(np.mean(fc_vals, axis=0))
+    std = torch.tensor(np.std(fc_vals, axis=0))
+    mask = mask.to(torch.bool)
+    a = 1.2
+    lower_bound = torch.full_like(mean, torch.inf)
+    lower_bound[~mask] = mean[~mask] - a*std[~mask]
+    upper_bound = torch.full_like(mean, -torch.inf)
+    upper_bound[~mask] = mean[~mask] + a*std[~mask]
+    
+    model.distilbert.transformer.mask_layer.lower_bound = lower_bound.to(device)
+    model.distilbert.transformer.mask_layer.upper_bound = upper_bound.to(device)
+    
+    return model
+
+def mask_range_bert(model, mask, fc_vals):
+    mean = torch.tensor(np.mean(fc_vals, axis=0))
+    std = torch.tensor(np.std(fc_vals, axis=0))
+    mask = mask.to(torch.bool)
+    a = 2.5
+    lower_bound = torch.full_like(mean, torch.inf)
+    lower_bound[~mask] = mean[~mask] - a*std[~mask]
+    upper_bound = torch.full_like(mean, -torch.inf)
+    upper_bound[~mask] = mean[~mask] + a*std[~mask]
+    
+    model.bert.encoder.mask_layer.lower_bound = lower_bound.to(device)
+    model.bert.encoder.mask_layer.upper_bound = upper_bound.to(device)
+    
+    return model
 
 
 def compute_std_high_max_mask(mean_vals, std_vals, percent):

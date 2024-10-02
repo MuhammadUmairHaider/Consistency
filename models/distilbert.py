@@ -398,6 +398,33 @@ class TransformerBlock(nn.Module):
         return output
 
 
+
+class MaskLayer(nn.Module):
+    def __init__(self, lower_bound, upper_bound, replacement_values):
+        super(MaskLayer, self).__init__()
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.replacement_values = replacement_values
+
+ 
+
+    def forward(self, x):
+        lower_bound = self.lower_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+        upper_bound = self.upper_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+        replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+
+ 
+
+        mask = (x >= lower_bound) & (x <= upper_bound)
+        x = torch.where(mask, replacement_values, x)
+        return x
+    
+    def set_perms(self,lower_bound, upper_bound, replacement_values):
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.replacement_values = replacement_values
+
+
 class Transformer(nn.Module):
     def __init__(self, config: PretrainedConfig):
         super().__init__()
@@ -406,6 +433,7 @@ class Transformer(nn.Module):
         self.gradient_checkpointing = False
         self.masking_layer = torch.ones(config.hidden_size).to("cuda")
         self.m_layer = config.m_layer
+        self.mask_layer = MaskLayer(torch.tensor(float('inf')), torch.tensor(float('-inf')), torch.tensor(0.0))
 
     def forward(
         self,
@@ -454,7 +482,8 @@ class Transformer(nn.Module):
                     output_attentions,
                 )
             if(i == self.m_layer):
-                hidden_state = layer_outputs[-1] * self.masking_layer
+                hidden_state = self.mask_layer(layer_outputs[-1])
+                # hidden_state = layer_outputs[-1]*self.masking_layer
             else:
                 hidden_state = layer_outputs[-1]
 

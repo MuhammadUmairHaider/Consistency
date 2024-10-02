@@ -566,7 +566,30 @@ class BertLayer(nn.Module):
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
 
+class MaskLayer(nn.Module):
+    def __init__(self, lower_bound, upper_bound, replacement_values):
+        super(MaskLayer, self).__init__()
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.replacement_values = replacement_values
 
+ 
+
+    def forward(self, x):
+        lower_bound = self.lower_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+        upper_bound = self.upper_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+        replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+
+ 
+
+        mask = (x >= lower_bound) & (x <= upper_bound)
+        x = torch.where(mask, replacement_values, x)
+        return x
+    
+    def set_perms(self,lower_bound, upper_bound, replacement_values):
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.replacement_values = replacement_values
 class BertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -575,6 +598,7 @@ class BertEncoder(nn.Module):
         self.gradient_checkpointing = False
         self.masking_layer = torch.ones(config.hidden_size, dtype=torch.float32).to("cuda")
         self.m_layer = config.m_layer
+        self.mask_layer = MaskLayer(torch.tensor(float('inf')), torch.tensor(float('-inf')), torch.tensor(0.0))
 
     def forward(
         self,
@@ -631,7 +655,8 @@ class BertEncoder(nn.Module):
                 )
 
             if(i == self.m_layer):
-                hidden_states = layer_outputs[0] * self.masking_layer
+                # hidden_states = layer_outputs[0] * self.masking_layer
+                hidden_states = self.mask_layer(layer_outputs[0])
             else:
                 hidden_states = layer_outputs[0]
 
