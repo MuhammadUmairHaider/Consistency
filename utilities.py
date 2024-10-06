@@ -238,7 +238,7 @@ def mask_range_distilbert(model, mask, fc_vals):
     mean = torch.tensor(np.mean(fc_vals, axis=0))
     std = torch.tensor(np.std(fc_vals, axis=0))
     mask = mask.to(torch.bool)
-    a = 1.2
+    a = 2.5
     lower_bound = torch.full_like(mean, torch.inf)
     lower_bound[~mask] = mean[~mask] - a*std[~mask]
     upper_bound = torch.full_like(mean, -torch.inf)
@@ -374,8 +374,8 @@ def eval(model, iterator, idx2tag, tag2idx, tok):
     confidences = np.array([float(line.split()[3]) for line in open('result', 'r').read().splitlines() if len(line) > 0])
     overall_acc = (y_true == y_pred).astype(np.int32).sum() / len(y_true)
     overall_confidence = confidences.mean()
-    print(f"Overall accuracy: {overall_acc:.3f}")
-    print(f"Overall confidence: {overall_confidence:.3f}")
+    # print(f"Overall accuracy: {overall_acc:.3f}")
+    # print(f"Overall confidence: {overall_confidence:.3f}")
 
     # Calculate and print per-token accuracies and confidences
     # print("\nPer-token accuracies and confidences:")
@@ -402,7 +402,7 @@ def eval(model, iterator, idx2tag, tag2idx, tok):
         return round(token_acc, 4), round(other_acc, 4), round(token_conf, 4), round(other_conf, 4)
 
     token_acc, other_acc, token_conf, other_conf = get_specific_token_accuracy(tok)
-    print(f"Specific token accuracy: {token_acc}, Specific token confidence: {token_conf}")
-    print(f"Other tokens accuracy: {other_acc}, Other tokens confidence: {other_conf}")
+    # print(f"Specific token accuracy: {token_acc}, Specific token confidence: {token_conf}")
+    # print(f"Other tokens accuracy: {other_acc}, Other tokens confidence: {other_conf}")
 
-    return encodings_by_tag
+    return encodings_by_tag,(token_acc, token_conf), (other_acc, other_conf)

@@ -72,12 +72,12 @@ for j in range(0,4):
     fc_vals = record_activations(dataset, model, tokenizer, text_tag=text_tag, mask_layer=mask_layer, batch_size=batch_size)
 
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.5)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,1)
     mask_std = mask_max_low_std
     print("Masking STD...")
-    model = mask_distillbert(model,mask_std)
+    # model = mask_distillbert(model,mask_std)
 
-    # model = mask_range_distilbert(model, mask_std, fc_vals)        
+    model = mask_range_distilbert(model, mask_std, fc_vals)        
     
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
     print("Total Masked :", t)
@@ -95,8 +95,8 @@ for j in range(0,4):
         std_comp_conf.append(acc[1])
 
     print("Masking MAX...")
-    model = mask_distillbert(model,mask_max)
-    # model = mask_range_distilbert(model, mask_max, fc_vals)
+    # model = mask_distillbert(model,mask_max) 
+    model = mask_range_distilbert(model, mask_max, fc_vals)
     t = int(mask_max.shape[0]-torch.count_nonzero(mask_max))
     print("Total Masked :", t)
     acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size, in_aug_dataset=aug_dataset[:len(dataset)])
