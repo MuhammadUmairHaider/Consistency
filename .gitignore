@@ -5,3 +5,5 @@ model_weights/
 *.pth
 *.csv
 *.pkl
+gpt2-emotion-classification/
+logs/

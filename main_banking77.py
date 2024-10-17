@@ -75,7 +75,7 @@ for j in range(0,77):
     fc_vals = record_activations(dataset, model, tokenizer, text_tag=text_tag, mask_layer=mask_layer, batch_size=batch_size)
 
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.5)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,1)
     mask_std = mask_max_low_std
     print("Masking STD...")
     # model = mask_bert(model,mask_std)
