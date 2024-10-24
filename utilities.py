@@ -410,8 +410,6 @@ def eval(model, iterator, idx2tag, tag2idx, tok):
 
 
 #gpt utils
-
-
 import nethook
 def manual_generate(model, tokenizer, input_ids, attention_mask, max_length):
     device = input_ids.device
@@ -420,50 +418,36 @@ def manual_generate(model, tokenizer, input_ids, attention_mask, max_length):
     # Initialize the output tensor with the input_ids
     generated = input_ids.clone()
     
-    # Create a tensor to keep track of which sequences have finished generating
-    finished_sequences = torch.zeros(batch_size, dtype=torch.bool, device=device)
-    
-    confidences = []
-    
-    all_fc_vals = []
+    confidences = torch.tensor([])
+    all_fc_vals = torch.tensor([])
     
     with torch.no_grad():
         for _ in range(max_length - input_ids.shape[1]):
             # Forward pass
             with nethook.TraceDict(model, ['transformer.mask_layer']) as ret:
                 outputs = model(input_ids=generated, attention_mask=attention_mask)
+                
                 fc1_vals = [
-                        ret[layer_fc1_vals].output[:,-1,:].to('cpu').numpy()#.transpose(0, 1)//works without transpose somehow
-                        for layer_fc1_vals in ret
-                    ]
-                all_fc_vals.append(fc1_vals)
-            next_token_logits = outputs.logits[:, -1, :]
-            
-            # Apply greedy decoding (argmax)
-            next_tokens = torch.argmax(next_token_logits, dim=-1)
-            
-            # append the confidence of the predicted token
-            confidences.append(torch.nn.functional.softmax(next_token_logits, dim=-1).max(dim=-1).values)
-            
-            # Check if the EOS token is generated
-            eos_token_generated = (next_tokens == tokenizer.eos_token_id)
-            finished_sequences = finished_sequences | eos_token_generated
-            
-            # Replace next token with EOS token if the sequence is finished
-            next_tokens = torch.where(finished_sequences, tokenizer.eos_token_id, next_tokens)
-            
-            # Append the new tokens
-            generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=-1)
-            
-            # Update attention mask
-            attention_mask = torch.cat([attention_mask, (~finished_sequences).unsqueeze(-1).long()], dim=1)
-            
-            # Break if all sequences have finished
-            if torch.all(finished_sequences):
-                break
+                    ret[layer_fc1_vals].output[:,-1,:].to('cpu')
+                    for layer_fc1_vals in ret
+                ]
+                all_fc_vals = torch.cat([all_fc_vals, torch.stack(fc1_vals, dim=1).unsqueeze(1)], dim=1)
+                
+                next_token_logits = outputs.logits[:, -1, :]
+                
+                # Apply greedy decoding (argmax)
+                next_tokens = torch.argmax(next_token_logits, dim=-1)
+                
+                # Append the confidence of the predicted token
+                confidences = torch.cat([confidences, torch.nn.functional.softmax(next_token_logits, dim=-1).unsqueeze(1).to('cpu')], dim=1)
+                
+                # Append the new tokens
+                generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=-1)
+                
+                # Update attention mask
+                attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), dtype=torch.long, device=device)], dim=1)
     
-    return generated, torch.stack(confidences, dim=1), all_fc_vals
-
+    return generated, confidences, all_fc_vals
 
 
 
@@ -476,7 +460,7 @@ def collate_fn(batch):
         'attention_mask': torch.stack([torch.tensor(item['attention_mask']) for item in batch]),
     }
 
-def evaluate_gpt2_classification(model, eval_dataset, tokenizer, batch_size=1):
+def evaluate_gpt2_classification_batch(model, eval_dataset, tokenizer, batch_size=32):
     
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -488,115 +472,43 @@ def evaluate_gpt2_classification(model, eval_dataset, tokenizer, batch_size=1):
     confidence = 0
     j = 0 
     all_hidden = []
-    for item in tqdm(eval_dataset, desc="Evaluating"):
-        input_ids = torch.tensor(item['input_ids']).unsqueeze(0).to(device)
-        attention_mask = torch.tensor(item['attention_mask']).unsqueeze(0).to(device)
-        
-        generated_sequences, confidences, fc_vals = manual_generate(model,tokenizer,input_ids,attention_mask,150)
-        
-        generated_sequences = generated_sequences[:, input_ids.shape[1]:][0]
-        
-        
-
-        label_token_ids = tokenizer.encode('[Label]', add_special_tokens=False)
-        label_len = len(label_token_ids)
-
-        label_positions = []
-
-        for i in range(len(generated_sequences) - label_len + 1):
-            if generated_sequences[i:i+label_len].tolist() == label_token_ids:
-                label_positions.append(i)
-                break
-            
-        full_text = tokenizer.decode(input_ids[0])
-        true_label = full_text.split("[Label] ")[1].split("<|endoftext|>")[0]
-
-        if not label_positions:
-            predicted_label = "No label found"
-        else:
-            for pos in label_positions:
-                predicted_label = tokenizer.decode(generated_sequences[pos+1])
-                
-                hidden_dim = fc_vals[pos+1]
-                if(predicted_label == true_label):
-                    confidence += confidences[0][pos+1].cpu().numpy().item()
-                    j += 1
-                all_hidden.append(hidden_dim[0][0])
-
-        
-        
-        
-
-        all_predictions.append(predicted_label)
-        all_labels.append(true_label)
-    
-    if not all_labels or not all_predictions:
-        print("No labels were extracted. Check if '[Label]' token exists in the tokenized text.")
-        return 0, "No labels extracted", [], []
-
-    accuracy = accuracy_score(all_labels, all_predictions)
-    
-    # Get unique labels
-    unique_labels = list(set(all_labels + all_predictions))
-    
-    # Generate classification report
-    try:
-        report = classification_report(all_labels, all_predictions, labels=unique_labels, target_names=unique_labels)
-    except ValueError as e:
-        report = f"Unable to generate classification report: {str(e)}"
-    
-    confidence = confidence/j if j > 0 else 0
-    
-    return round(accuracy,4), round(confidence,4), all_hidden, report, all_labels, all_predictions 
-
-
-def evaluate_gpt2_classification_batch(model, eval_dataset, tokenizer, batch_size=8):
-    model.eval()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    model.config.pad_token_id = tokenizer.pad_token_id 
-    
-    all_predictions = []
-    all_labels = []
-    
-    # Create a DataLoader for batch processing
     dataloader = torch.utils.data.DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
-    j = 0
-    confidence_t = 0
-    for batch in tqdm(dataloader, desc="Evaluating"):
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-
-        with torch.no_grad():
-            generated_sequences, confidences, all_fc_vals = manual_generate(model,tokenizer,input_ids,attention_mask,150)
+    for item in tqdm(dataloader, desc="Evaluating"):
+        input_ids = torch.tensor(item['input_ids']).to(device)
+        attention_mask = torch.tensor(item['attention_mask']).to(device)
+        
+        generated_sequences, confidences, fc_vals = manual_generate(model,tokenizer,input_ids,attention_mask,400)
+        
+        
 
         label_token_ids = tokenizer.encode('[Label]', add_special_tokens=False)
         label_len = len(label_token_ids)
-        endoftext_ids = tokenizer.encode('<|endoftext|>', add_special_tokens=False)
-        endoftext_len = len(endoftext_ids)
 
-        for sequence, orig_sequence, conf, fc_vals in zip(generated_sequences, input_ids, confidences, all_fc_vals[0]):
+        for input_id, generated_sequence, conf, fc in zip(input_ids,generated_sequences, confidences, fc_vals):
+            generated_sequence = generated_sequence[input_id.shape[0]:].to('cpu')
             label_positions = []
-            endoftext_positions = []
-
-            for i in range(len(orig_sequence) - label_len + 1):
-                if orig_sequence[i:i+label_len].tolist() == label_token_ids:
+            for i in range(len(generated_sequence) - label_len + 1):
+                if generated_sequence[i:i+label_len].tolist() == label_token_ids:
                     label_positions.append(i)
-
-            for i in range(len(orig_sequence) - endoftext_len + 1):
-                if orig_sequence[i:i+endoftext_len].tolist() == endoftext_ids:
-                    endoftext_positions.append(i)
                     break
-
-            for pos, end in zip(label_positions, endoftext_positions):
-                predicted_label = tokenizer.decode(sequence[pos+1:end])
-                confidence_t += conf[pos+1:end].item()
-                token_fc = fc_vals[0][pos+1:end]
-                j += 1
                 
-
-            full_text = tokenizer.decode(orig_sequence)
+            full_text = tokenizer.decode(input_id)
             true_label = full_text.split("[Label] ")[1].split("<|endoftext|>")[0]
+            
+            true_label_tokenized = tokenizer.encode(true_label)
+
+            if not label_positions or label_positions[0]+1 == len(generated_sequence):
+                predicted_label = "No label found"
+            else:
+                for pos in label_positions:
+                    predicted_label = tokenizer.decode(generated_sequence[pos+1])
+                    
+                    hidden_dim = fc[pos+1]
+                    confidence += conf[pos+1][true_label_tokenized].cpu().numpy().item()
+                    # if(predicted_label == true_label):
+                        
+                    j += 1
+                    all_hidden.append(hidden_dim.numpy())
 
             all_predictions.append(predicted_label)
             all_labels.append(true_label)
@@ -614,14 +526,15 @@ def evaluate_gpt2_classification_batch(model, eval_dataset, tokenizer, batch_siz
     except ValueError as e:
         report = f"Unable to generate classification report: {str(e)}"
     
-    return accuracy, report, all_labels, all_predictions, confidence_t/j
-
+    confidence = confidence/j if j > 0 else 0
+    
+    return round(accuracy,4), round(confidence,4), all_hidden, report, all_labels, all_predictions 
 
 def mask_range_gpt(model, mask, fc_vals):
     mean = torch.tensor(np.mean(fc_vals, axis=0))
     std = torch.tensor(np.std(fc_vals, axis=0))
     mask = mask.to(torch.bool)
-    a = 99999999
+    a = torch.inf
     lower_bound = torch.full_like(mean, torch.inf)
     lower_bound[~mask] = mean[~mask] - a*std[~mask]
     upper_bound = torch.full_like(mean, -torch.inf)
@@ -630,4 +543,9 @@ def mask_range_gpt(model, mask, fc_vals):
     model.transformer.mask_layer.lower_bound = lower_bound.to(device)
     model.transformer.mask_layer.upper_bound = upper_bound.to(device)
     
+    return model
+
+def reset_gpt(model):
+    model.transformer.mask_layer.lower_bound = torch.tensor(float('inf')).to(device)
+    model.transformer.mask_layer.upper_bound = torch.tensor(float('-inf')).to(device)
     return model

@@ -6,13 +6,6 @@ from utilities import evaluate_gpt2_classification_batch as evaluate_gpt2_classi
 import torch  # if you're using PyTorch
 # import tensorflow as tf  # if you're using TensorFlow
 
-from datasets import load_dataset
-from transformers import GPT2Tokenizer, DataCollatorForLanguageModeling
-import random
-import numpy as np
-import torch  # if you're using PyTorch
-# import tensorflow as tf  # if you're using TensorFlow
-
 # Set random seed
 seed_value = 42  # or any other integer
 
@@ -27,7 +20,12 @@ import torch
 
 torch.autograd.set_detect_anomaly(True)
 # Load dataset
-dataset = load_dataset("dair-ai/emotion")
+dataset = load_dataset("fancyzhx/dbpedia_14")
+
+dataset = dataset.rename_column("content", "text")
+
+# dataset = dataset.filter(lambda x: x['label'] not in [2])
+
 # Load tokenizer
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 special_tokens = '[Label]'
@@ -60,14 +58,15 @@ for label in label2text:
 num_added_tokens = tokenizer.add_tokens(new_tokens)
 print(f"\nAdded {num_added_tokens} new tokens to the tokenizer")
 
+# Function to format the dataset (without removing original columns)
 def format_data(examples):
     formatted_texts = []
     
     for text, label in zip(examples['text'], examples['label']):
-        tok_text = tokenizer.encode(text, max_length=70, truncation=True)
+        tok_text = tokenizer.encode(text, max_length=170, truncation=True)
         text = tokenizer.decode(tok_text)
         label_str = dataset['train'].features['label'].int2str(label)  # Convert label to string
-        formatted_texts.append(f"{text}[Label][{label_str}<|endoftext|>]")
+        formatted_texts.append(f"{text}[Label][{label_str}]")
     return {'formatted_text': formatted_texts}  # Create a new field for the formatted text
 
 # Apply formatting to the dataset
@@ -97,13 +96,13 @@ model1.resize_token_embeddings(len(tokenizer))
 model1.config.m_layer = 11
 import os
 
-base_path = os.path.join("model_weights", 'gpt2-emotion-classification')
+base_path = os.path.join("model_weights", 'gpt2-db14-classification')
 if not os.path.exists(base_path):
     os.makedirs(base_path)
 
 weights_path = os.path.join(base_path, "weights.pth")
 
-# torch.save(model1.state_dict(), weights_path)
+torch.save(model1.state_dict(), weights_path)
 
 model = GPT2LMHeadModel(model1.config)
 
@@ -111,31 +110,32 @@ model = GPT2LMHeadModel(model1.config)
 model.load_state_dict(torch.load(weights_path))
 
 
-# # Use the function
-# test_dataset = tokenized_dataset['test']
-# accuracy, report, true_labels, predicted_labels, confidence, all_hidden = evaluate_gpt2_classification(model, test_dataset, tokenizer)
+# Training arguments
+training_args = TrainingArguments(
+    output_dir="./gpt2-emotion-classification",
+    evaluation_strategy="epoch",
+    learning_rate=2e-5,
+    weight_decay=0.01,
+    per_device_train_batch_size=64,
+    per_device_eval_batch_size=64,
+    num_train_epochs=3,
+    logging_dir='./logs',
+)
 
+# Initialize Trainer
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=tokenized_dataset['train'].remove_columns(['label', 'text','formatted_text']),
+    eval_dataset=tokenized_dataset['test'].remove_columns(['label', 'text','formatted_text']),
+    data_collator=data_collator,
+    tokenizer=tokenizer,
+)
 
+# Train the model
+trainer.train()
 
-# print(f"Accuracy: {accuracy:.4f}")
-# print("Classification Report:")
-# print("confidence: ", confidence)
-# print(report)
-
-# # If you want to see the actual labels and predictions
-# print("\nSample of True Labels:", true_labels[:10])
-# print("Sample of Predicted Labels:", predicted_labels[:10])
-
-# # Check a few samples of the reconstructed text
-# print("\nSample of reconstructed texts:")
-# for i in range(5):
-#     full_text = tokenizer.decode(test_dataset[i]['input_ids'])
-#     print(f"Sample {i}: {full_text}")
-
-# # Print some statistics
-# print(f"\nTotal samples processed: {len(true_labels)}")
-# print(f"Unique true labels: {set(true_labels)}")
-# print(f"Unique predicted labels: {set(predicted_labels)}")
+torch.save(model.state_dict(), weights_path)
 
 
 
@@ -173,19 +173,20 @@ total_masked = []
 
 tokenized_dataset = tokenized_dataset['test']#.shuffle().select(range(200))
 # tokenized_dataset = tokenized_dataset[:20]
-for j in range(0,6):
+for j in range(0,14):
     # model = get_model_distilbert("esuriddick/distilbert-base-uncased-finetuned-emotion", mask_layer)
-    max = 0
+    max=0
     # for i in tokenized_dataset:
     #     print(i['input_ids'].shape)
     #     if(i['input_ids'].shape[0]>max):
     #         max = i['input_ids'].shape[0]
     # print("Max: ", max)
+    
     model = reset_gpt(model)
     dataset = tokenized_dataset.filter(lambda x: x['label'] in [j])
     dataset_complement = tokenized_dataset.filter(lambda x: x['label'] not in [j])
     
-    if(j==6):
+    if(j==14):
         dataset = tokenized_dataset
 
     class_labels.append(f"Class {j}")
