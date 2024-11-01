@@ -827,6 +827,32 @@ LLAMA_INPUTS_DOCSTRING = r"""
 """
 
 
+class MaskLayer(nn.Module):
+    def __init__(self, lower_bound, upper_bound, replacement_values):
+        super(MaskLayer, self).__init__()
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.replacement_values = replacement_values
+
+ 
+
+    def forward(self, x):
+        lower_bound = self.lower_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+        upper_bound = self.upper_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+        replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+
+ 
+
+        mask = (x >= lower_bound) & (x <= upper_bound)
+        x = torch.where(mask, replacement_values, x)
+        return x
+    
+    def set_perms(self,lower_bound, upper_bound, replacement_values):
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.replacement_values = replacement_values
+
+
 @add_start_docstrings(
     "The bare LLaMA Model outputting raw hidden-states without any specific head on top.",
     LLAMA_START_DOCSTRING,
@@ -851,6 +877,8 @@ class LlamaModel(LlamaPreTrainedModel):
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = LlamaRotaryEmbedding(config=config)
         self.gradient_checkpointing = False
+        self.m_layer = config.m_layer
+        self.mask_layer = MaskLayer(torch.tensor(float('inf')), torch.tensor(float('-inf')), torch.tensor(0.0))
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -929,7 +957,7 @@ class LlamaModel(LlamaPreTrainedModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
-
+        i = 0
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -958,8 +986,12 @@ class LlamaModel(LlamaPreTrainedModel):
                     position_embeddings=position_embeddings,
                     **flash_attn_kwargs,
                 )
-
-            hidden_states = layer_outputs[0]
+            if(i == self.m_layer):
+                hidden_states = self.mask_layer(layer_outputs[0])
+            else:
+                hidden_states = layer_outputs[0]
+            # hidden_states = layer_outputs[0]
+            i+=1
 
             if use_cache:
                 next_decoder_cache = layer_outputs[2 if output_attentions else 1]

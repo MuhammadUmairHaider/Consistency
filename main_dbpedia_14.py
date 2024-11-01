@@ -8,7 +8,7 @@ from utilities import compute_accuracy, compute_masks, mask_bert, get_model_bert
 
 batch_size = 1024
 mask_layer = 11
-text_tag = "title"
+text_tag = "content"
 compliment = True
 results_table = PrettyTable()
 if(compliment):

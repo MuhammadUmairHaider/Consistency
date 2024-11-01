@@ -1,0 +1,153 @@
+from datasets import load_dataset
+from transformers import GPT2Tokenizer, DataCollatorForLanguageModeling
+import random
+import numpy as np
+from utilities import evaluate_llma_classification, mask_range_llma,compute_masks, reset_llma
+import torch  
+
+from datasets import load_from_disk
+
+label_mapping = {
+    0: "sadness",
+    1: "joy",
+    2: "love",
+    3: "anger",
+    4: "fear",
+    5: "surprise"
+}
+
+# Load the dataset from disk
+correct_dataset = load_from_disk('correct_predictions_dataset')
+num_classes = 6
+
+# tao = 2.5
+tao = torch.inf
+
+
+# Set random seed
+seed_value = 42  # or any other integer
+
+random.seed(seed_value)
+np.random.seed(seed_value)
+
+if torch.cuda.is_available():  # PyTorch-specific
+    torch.manual_seed(seed_value)
+    torch.cuda.manual_seed_all(seed_value)
+
+import torch
+
+torch.autograd.set_detect_anomaly(True)
+
+# Load tokenizer
+from models.lama import LlamaForCausalLM
+import torch
+
+
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+model1 = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-3B")
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B")
+
+model1.config.m_layer = 27
+import os
+
+base_path = os.path.join("model_weights", 'llama-emotion-classification')
+if not os.path.exists(base_path):
+    os.makedirs(base_path)
+
+weights_path = os.path.join(base_path, "weights.pth")
+
+# torch.save(model1.state_dict(), weights_path)
+
+model = LlamaForCausalLM(model1.config)
+
+model.load_state_dict(torch.load(weights_path))
+
+from prettytable import PrettyTable
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.tensor")
+
+batch_size = 256
+mask_layer = 5
+compliment = True
+results_table = PrettyTable()
+if(compliment):
+   results_table.field_names = results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
+
+class_labels = []
+base_accuracies = []
+base_confidences = []
+base_comp_acc = []
+base_comp_conf = []
+std_masked_counts = []
+std_accuracies = []
+std_confidences = []
+std_comp_acc = []
+std_comp_conf = []
+max_masked_counts = []
+max_accuracies = []
+max_confidences = []
+max_comp_acc = []
+max_comp_conf = []
+diff_from_max = []
+total_masked = []
+
+tokenized_dataset = correct_dataset#.select(range(20))
+for j in range(0,num_classes):
+    model = reset_llma(model)
+    dataset = tokenized_dataset.filter(lambda x: x['label'] in [j])
+    dataset_complement = tokenized_dataset.filter(lambda x: x['label'] not in [j])
+    
+    if(j==6):
+        dataset = tokenized_dataset
+
+    class_labels.append(f"Class {j}")
+    acc = evaluate_llma_classification(model, dataset, tokenizer)
+    print("Class ",j, "base accuracy: ", acc[0], acc[1])
+    base_accuracies.append(acc[0])
+    base_confidences.append(acc[1])
+    if(compliment):
+        acc = evaluate_llma_classification(model, dataset_complement, tokenizer)
+        print("Class ",j, "complement base accuracy: ", acc[0], acc[1])
+        base_comp_acc.append(acc[0])
+        base_comp_conf.append(acc[1])
+        
+    print("Recording activations...")
+    fc_vals = evaluate_llma_classification(model, dataset, tokenizer)
+    fc_vals = fc_vals[2]
+
+        
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.5)
+    mask_std = mask_max_low_std
+    print("Masking MAX...")
+    model = mask_range_llma(model, mask_max, fc_vals, tao)
+    t = int(mask_max.shape[0]-torch.count_nonzero(mask_max))
+    print("Total Masked :", t)
+    acc = evaluate_llma_classification(model, dataset, tokenizer)
+    print("accuracy after masking MAX: ", acc[0], acc[1])
+    max_accuracies.append(acc[0])
+    max_confidences.append(acc[1])
+    acc = evaluate_llma_classification(model, dataset_complement, tokenizer)
+    print("accuracy after masking MAX on complement: ", acc[0], acc[1])
+    max_comp_acc.append(acc[0])
+    max_comp_conf.append(acc[1])
+    if(compliment):
+        results_table.add_row([
+            class_labels[j],
+            base_accuracies[j],
+            base_confidences[j],
+            base_comp_acc[j],
+            base_comp_conf[j],
+            max_accuracies[j],
+            max_confidences[j],
+            max_comp_acc[j],
+            max_comp_conf[j]
+        ])
+print(results_table)
+print("Layer ", mask_layer)
+print("Average Base Accuracy: ",round(sum(base_accuracies)/len(base_accuracies), 4))
+print("Average Base Confidence: ", round(sum(base_confidences)/len(base_confidences), 4))
+print("Average MAX Accuracy: ", round(sum(max_accuracies)/len(max_accuracies), 4))
+print("Average MAX Confidence: ", round(sum(max_confidences)/len(max_confidences), 4))
+print("Average MAX Complement Accuracy: ", round(sum(max_comp_acc)/len(max_comp_acc), 4))
+print("Average MAX Complement Confidence: ", round(sum(max_comp_conf)/len(max_comp_conf), 4))

@@ -458,7 +458,57 @@ def collate_fn(batch):
     return {
         'input_ids': torch.stack([torch.tensor(item['input_ids']) for item in batch]),
         'attention_mask': torch.stack([torch.tensor(item['attention_mask']) for item in batch]),
+        'label': torch.stack([torch.tensor(item['label']) for item in batch])
     }
+
+
+
+def manual_generate_v2(model, input_ids, attention_mask):
+    
+    with torch.no_grad():
+        with nethook.TraceDict(model, ['transformer.mask_layer']) as ret:
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            fc1_vals = [
+                    ret[layer_fc1_vals].output[:,-1,:].to('cpu')
+                    for layer_fc1_vals in ret
+                ]
+        next_token_logits = outputs.logits[:, -1, :]
+        next_tokens = torch.argmax(next_token_logits, dim=-1)
+        confidences = torch.nn.functional.softmax(next_token_logits, dim=-1)
+        
+        return next_tokens, confidences, fc1_vals[0]
+        
+
+def evaluate_gpt2_classification(model, eval_dataset, tokenizer, batch_size=32):
+    
+    model.eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    model.config.pad_token_id = tokenizer.pad_token_id
+    confidence = 0
+    all_hidden = []
+    correct = 0
+    j = 0
+    dataloader = torch.utils.data.DataLoader(eval_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    for item in tqdm(dataloader, desc="Evaluating"):
+       input_ids = torch.tensor(item['input_ids']).to(device)
+       attention_mask = torch.tensor(item['attention_mask']).to(device)
+        
+       generated_token, confidences, fc_vals = manual_generate_v2(model,input_ids,attention_mask)
+       
+       for true_label, predicted_token, conf, fc in zip(item['label'], generated_token, confidences, fc_vals):
+            true_label = tokenizer.encode(eval_dataset.features['label'].int2str(true_label.item()), add_special_tokens=False, truncation=True, return_tensors='pt').squeeze()
+            
+            predicted_label = predicted_token
+            confidence += conf[true_label].cpu().numpy().item()
+            j += 1
+            if predicted_label == true_label:
+                correct += 1
+            all_hidden.append(fc.numpy())
+            
+    return round(correct/j,4), round(confidence/j,4), all_hidden
+    
+
 
 def evaluate_gpt2_classification_batch(model, eval_dataset, tokenizer, batch_size=32):
     
@@ -530,15 +580,15 @@ def evaluate_gpt2_classification_batch(model, eval_dataset, tokenizer, batch_siz
     
     return round(accuracy,4), round(confidence,4), all_hidden, report, all_labels, all_predictions 
 
-def mask_range_gpt(model, mask, fc_vals):
+def mask_range_gpt(model, mask, fc_vals, tao):
     mean = torch.tensor(np.mean(fc_vals, axis=0))
     std = torch.tensor(np.std(fc_vals, axis=0))
     mask = mask.to(torch.bool)
-    a = torch.inf
+    
     lower_bound = torch.full_like(mean, torch.inf)
-    lower_bound[~mask] = mean[~mask] - a*std[~mask]
+    lower_bound[~mask] = mean[~mask] - tao*std[~mask]
     upper_bound = torch.full_like(mean, -torch.inf)
-    upper_bound[~mask] = mean[~mask] + a*std[~mask]
+    upper_bound[~mask] = mean[~mask] + tao*std[~mask]
     
     model.transformer.mask_layer.lower_bound = lower_bound.to(device)
     model.transformer.mask_layer.upper_bound = upper_bound.to(device)
@@ -548,4 +598,136 @@ def mask_range_gpt(model, mask, fc_vals):
 def reset_gpt(model):
     model.transformer.mask_layer.lower_bound = torch.tensor(float('inf')).to(device)
     model.transformer.mask_layer.upper_bound = torch.tensor(float('-inf')).to(device)
+    return model
+
+#Lama Utilities
+
+import nethook
+def manual_generate_llma(model, input_ids, attention_mask, max_length):
+    device = input_ids.device
+    batch_size = input_ids.shape[0]
+    
+    # Initialize the output tensor with the input_ids
+    generated = input_ids.clone()
+    
+    confidences = torch.tensor([])
+    all_fc_vals = torch.tensor([])
+    fc = torch.tensor([])
+    with torch.no_grad():
+        for _ in range(max_length - input_ids.shape[1]):
+            # Forward pass
+                with nethook.TraceDict(model, ['model.mask_layer']) as ret:
+                    outputs = model(input_ids=generated, attention_mask=attention_mask)
+                    fc1_vals = [
+                    ret[layer_fc1_vals].output[:,-1,:].to('cpu')
+                    for layer_fc1_vals in ret
+                ]
+                all_fc_vals = torch.cat([all_fc_vals, torch.stack(fc1_vals, dim=1).unsqueeze(1)], dim=1)
+                next_token_logits = outputs.logits[:, -1, :]
+                
+                # Apply greedy decoding (argmax)
+                next_tokens = torch.argmax(next_token_logits, dim=-1)
+                
+                # Append the confidence of the predicted token
+                confidences = torch.cat([confidences, torch.nn.functional.softmax(next_token_logits, dim=-1).unsqueeze(1).to('cpu')], dim=1)
+                
+                # Append the new tokens
+                generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=-1)
+                
+                # Update attention mask
+                attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), dtype=torch.long, device=device)], dim=1)
+    
+    return generated, confidences, all_fc_vals
+
+
+from tqdm.auto import tqdm
+import torch
+def evaluate_llma_classification(model, eval_dataset, tokenizer):
+
+    # Create label mapping
+    label_mapping = {
+        0: "sadness",
+        1: "joy",
+        2: "love",
+        3: "anger",
+        4: "fear",
+        5: "surprise"
+    }
+
+
+    # Configure progress bar for the combined dataset
+    progress_bar = tqdm(eval_dataset, desc="Processing examples")
+
+    i = 0
+    correct = 0
+    confidence = 0
+    fc_vals = []
+    model.to('cuda')
+    model.eval()
+
+    for example in progress_bar:
+        prompt = '''Choose from one of these: anger, fear, joy, love, sadness, surprise
+    {{"I can't believe how wonderful this day has been!":joy}}
+    {{"Missing you more with each passing day":sadness}}
+    {{"How dare they treat me like this!":anger}}
+    {{"I'm getting butterflies just thinking about tomorrow":fear}}
+    {{"You mean everything to me": ["love"]}}
+    {{"I didn't expect this to happen at all":surprise}}
+    {{"{}":'''.format(example['text'])
+        
+        input_ids = tokenizer([prompt, prompt], return_tensors='pt')
+        
+        # Generate output
+        output = manual_generate_llma(
+            model, 
+            input_ids['input_ids'].to('cuda'), 
+            input_ids['attention_mask'].to('cuda'), 
+            input_ids['input_ids'].shape[1]+5
+        )
+        
+            # Get predicted label
+        predicted_label = tokenizer.decode(
+            output[0][0][input_ids['input_ids'].shape[1]:]
+        ).split('}')[0]
+        
+        # Get true label text using the mapping
+        true_label_text = label_mapping[example['label']]
+        
+        i += 1
+        if true_label_text == predicted_label:
+            correct += 1
+            
+        # else:
+        #     print(f"Text: {example['text']}, True label: {true_label_text}, Predicted label: {predicted_label}")
+        
+        label_tok = tokenizer.encode(true_label_text)[1]
+        
+        # Update progress bar description with current accuracy
+        progress_bar.set_description(f"Accuracy: {round(correct/i,3)*100}%")
+        confidence += output[1][0][0][label_tok].item()
+        fc_vals.append(output[2][0][0].squeeze())
+        
+        
+
+    return round(correct/i,4), round(confidence/i,4), fc_vals
+
+def reset_llma(model):
+    model.model.mask_layer.lower_bound = torch.tensor(float('inf')).to(device)
+    model.model.mask_layer.upper_bound = torch.tensor(float('-inf')).to(device)
+    return model
+
+
+def mask_range_llma(model, mask, fc_vals, tao):
+    mean = torch.tensor(np.mean(fc_vals, axis=0))
+    std = torch.tensor(np.std(fc_vals, axis=0))
+    mask = mask.to(torch.bool)
+    
+    lower_bound = torch.full_like(mean, torch.inf)
+    lower_bound[~mask] = mean[~mask] - tao*std[~mask]
+    upper_bound = torch.full_like(mean, -torch.inf)
+    upper_bound[~mask] = mean[~mask] + tao*std[~mask]
+    
+    model.model.mask_layer.lower_bound = lower_bound.to(device)
+    model.model.mask_layer.upper_bound = upper_bound.to(device)
+    
     return model

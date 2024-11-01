@@ -104588,3 +104588,37 @@ set VBN VBN 0.9977
 *-23 -NONE- -NONE- 0.9976
 . . . 0.9998
 
+
+
+
+y_prompt="""
+    Perform the following tasks:
+    1. Given the current chat context: {{{}}} , is the new query \"{}\"
+    Determine if the new query is on the same specific topic as the previous discussion, considering:
+    - The type of data being asked about (e.g., sleep, insight, motivation)
+    - The time period in question
+    - The specific metrics or aspects being discussed
+    Answer True if:
+    - The new query is a direct follow-up or clarification of the previous topic
+    - It asks for more details about the same type of data and time period
+    Answer False if:
+    - The new query introduces a new type of data or metric
+    - It asks about a significantly different time period
+    - It's not a natural continuation of the previous conversation
+    Examples:
+    Previous: "How has my sleep been in April?"
+    New query (True): "Can you give me more details about my deep sleep"
+    New query (False): "insigns in april elaborate"
+    \n
+    2. Given some sample examples below for data annotation {{text: labels}}:
+    {{how have i been doing?: ["alldata"]}}
+    {{How has my sleep affected my productivity and mood in the past month?: ["productivity,mood,date"]}}
+    {{Tell me the time I should do most of my work of the day.: ["nodata"]}}
+    {{What was my insight about yesterday?: ["insight"]}}
+    {{Is my resting heart rate normal?: ["biometrics"]}}
+    {{What time of day does activity most benefit my wellbeing?: ["activity","wellbeing"]}}
+    {{Does increased activity correlate with improved mood?: ["activity","mood"]}}
+    Given the labels are ["energy",""activity","insight","motivation","weather","mood","productivity","alldata","calender","attitude","wellbeing","sleep","checkin"]
+    extract the labels, if no labels applicable return ["nodata"] and the start, end date information from the new query.
+    \\Reply only in format 'context':'True or False', labels':['label1',], 'start_date: YYYY-MM-DD, end_date: YYYY-MM-DD'.
+    Given today's date time is {}.""

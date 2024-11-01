@@ -2,16 +2,18 @@ from datasets import load_dataset
 from transformers import GPT2Tokenizer, DataCollatorForLanguageModeling
 import random
 import numpy as np
-from utilities import evaluate_gpt2_classification_batch as evaluate_gpt2_classification, mask_range_gpt,compute_masks, reset_gpt
-import torch  # if you're using PyTorch
-# import tensorflow as tf  # if you're using TensorFlow
+from utilities import evaluate_gpt2_classification as evaluate_gpt2_classification, mask_range_gpt,compute_masks, reset_gpt
+import torch  
 
-from datasets import load_dataset
-from transformers import GPT2Tokenizer, DataCollatorForLanguageModeling
-import random
-import numpy as np
-import torch  # if you're using PyTorch
-# import tensorflow as tf  # if you're using TensorFlow
+dataset_name = "fancyzhx/dbpedia_14"
+
+text_tag = "content"
+
+num_classes = 14
+
+tao = 2.5
+# tao = torch.inf
+
 
 # Set random seed
 seed_value = 42  # or any other integer
@@ -27,14 +29,9 @@ import torch
 
 torch.autograd.set_detect_anomaly(True)
 # Load dataset
-dataset = load_dataset("dair-ai/emotion")
+dataset = load_dataset(dataset_name)
 # Load tokenizer
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-special_tokens = '[Label]'
-
-# Add the special tokens to the tokenizer
-tokenizer.add_tokens(special_tokens)
-tokenizer.pad_token = tokenizer.eos_token
 
 
 special_tokens_dict = {}
@@ -43,8 +40,7 @@ label2text = dataset['train'].features['label'].names
 
 for label in label2text:
     # Create special token format (with and without space)
-    special_token = f'[{label}]'
-    special_token_with_space = f'[{label}]'
+    special_token = f'{label}'
     
     # Check if the label is already a single token in the tokenizer
     label_tokens = tokenizer.encode(label, add_special_tokens=False)
@@ -60,32 +56,63 @@ for label in label2text:
 num_added_tokens = tokenizer.add_tokens(new_tokens)
 print(f"\nAdded {num_added_tokens} new tokens to the tokenizer")
 
+special_tokens = {
+    'pad_token': '<|pad|>',
+    'sep_token': '<|sep|>',
+    'eos_token': '<|eos|>'
+}
+tokenizer.add_special_tokens(special_tokens)
+
 def format_data(examples):
     formatted_texts = []
-    
-    for text, label in zip(examples['text'], examples['label']):
-        tok_text = tokenizer.encode(text, max_length=70, truncation=True)
+    for text, label in zip(examples[text_tag], examples['label']):
+        # Convert label to string
+        
+        tok_text = tokenizer.encode(text, max_length=120, truncation=True)
         text = tokenizer.decode(tok_text)
-        label_str = dataset['train'].features['label'].int2str(label)  # Convert label to string
-        formatted_texts.append(f"{text}[Label][{label_str}<|endoftext|>]")
-    return {'formatted_text': formatted_texts}  # Create a new field for the formatted text
+        label_str = dataset['train'].features['label'].int2str(label)
+        formatted_text = f"Classify emotion: {text}{tokenizer.sep_token}"#{label_str}{tokenizer.eos_token}"
+        formatted_texts.append(formatted_text)
+    return {'formatted_text': formatted_texts}
 
-# Apply formatting to the dataset
+def tokenize_and_prepare(examples):
+
+    # Tokenize with batch processing
+    tokenized = tokenizer(
+        examples['formatted_text'],
+        padding='max_length',
+        max_length=128,
+        truncation=True,
+        return_tensors="pt"
+    )
+    
+    # Clone input_ids to create labels
+    labels = tokenized['input_ids'].clone()
+    
+    # Find the position of sep_token
+    sep_token_id = tokenizer.convert_tokens_to_ids(tokenizer.sep_token)
+    sep_positions = (labels == sep_token_id).nonzero(as_tuple=True)
+    
+    # Mask all tokens with -100 except for the token right after sep_token
+    labels[:] = -100  # Mask all initially
+    for batch_idx, sep_pos in zip(*sep_positions):
+        if sep_pos + 1 < labels.size(1):
+            labels[batch_idx, sep_pos + 1] = tokenized['input_ids'][batch_idx, sep_pos + 1]
+    
+    # Set padding tokens to -100
+    labels[labels == tokenizer.pad_token_id] = -100
+    
+    return {
+        'input_ids': tokenized['input_ids'],
+        'attention_mask': tokenized['attention_mask'],
+        'labels': labels
+    }
+# Process the dataset
 formatted_dataset = dataset.map(format_data, batched=True)
-
-# Tokenize the formatted dataset
-def tokenize_function(examples):
-    return tokenizer(examples["formatted_text"], padding='max_length', max_length = 180, truncation=True)
-
-tokenized_dataset = formatted_dataset.map(tokenize_function, batched=True)
-
-# Data collator for language modeling
-data_collator = DataCollatorForLanguageModeling(
-    tokenizer=tokenizer, mlm=False
+tokenized_dataset = formatted_dataset.map(
+    tokenize_and_prepare, 
+    batched=True,
 )
-
-# Keep the original 'text' and 'label' columns intact
-tokenized_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "text", "label"])
 
 from transformers import GPT2LMHeadModel as gt, Trainer, TrainingArguments
 from models.gpt2 import GPT2LMHeadModel
@@ -97,45 +124,16 @@ model1.resize_token_embeddings(len(tokenizer))
 model1.config.m_layer = 11
 import os
 
-base_path = os.path.join("model_weights", 'gpt2-emotion-classification')
+base_path = os.path.join("model_weights", dataset_name)
 if not os.path.exists(base_path):
     os.makedirs(base_path)
 
 weights_path = os.path.join(base_path, "weights.pth")
 
-# torch.save(model1.state_dict(), weights_path)
-
 model = GPT2LMHeadModel(model1.config)
 
 
 model.load_state_dict(torch.load(weights_path))
-
-
-# # Use the function
-# test_dataset = tokenized_dataset['test']
-# accuracy, report, true_labels, predicted_labels, confidence, all_hidden = evaluate_gpt2_classification(model, test_dataset, tokenizer)
-
-
-
-# print(f"Accuracy: {accuracy:.4f}")
-# print("Classification Report:")
-# print("confidence: ", confidence)
-# print(report)
-
-# # If you want to see the actual labels and predictions
-# print("\nSample of True Labels:", true_labels[:10])
-# print("Sample of Predicted Labels:", predicted_labels[:10])
-
-# # Check a few samples of the reconstructed text
-# print("\nSample of reconstructed texts:")
-# for i in range(5):
-#     full_text = tokenizer.decode(test_dataset[i]['input_ids'])
-#     print(f"Sample {i}: {full_text}")
-
-# # Print some statistics
-# print(f"\nTotal samples processed: {len(true_labels)}")
-# print(f"Unique true labels: {set(true_labels)}")
-# print(f"Unique predicted labels: {set(predicted_labels)}")
 
 
 
@@ -146,12 +144,10 @@ warnings.filterwarnings("ignore", category=UserWarning, module="torch.tensor")
 
 batch_size = 256
 mask_layer = 5
-text_tag = "text"
 compliment = True
 results_table = PrettyTable()
 if(compliment):
    results_table.field_names = results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
-# results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "STD Accuracy", "STD Confidence", "Same as Max"]#, "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"]
 
 class_labels = []
 base_accuracies = []
@@ -172,15 +168,7 @@ diff_from_max = []
 total_masked = []
 
 tokenized_dataset = tokenized_dataset['test']#.shuffle().select(range(200))
-# tokenized_dataset = tokenized_dataset[:20]
-for j in range(0,6):
-    # model = get_model_distilbert("esuriddick/distilbert-base-uncased-finetuned-emotion", mask_layer)
-    max = 0
-    # for i in tokenized_dataset:
-    #     print(i['input_ids'].shape)
-    #     if(i['input_ids'].shape[0]>max):
-    #         max = i['input_ids'].shape[0]
-    # print("Max: ", max)
+for j in range(0,num_classes):
     model = reset_gpt(model)
     dataset = tokenized_dataset.filter(lambda x: x['label'] in [j])
     dataset_complement = tokenized_dataset.filter(lambda x: x['label'] not in [j])
@@ -207,8 +195,7 @@ for j in range(0,6):
     mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.5)
     mask_std = mask_max_low_std
     print("Masking MAX...")
-    # model = mask_distillbert(model,mask_max)
-    model = mask_range_gpt(model, mask_max, fc_vals)
+    model = mask_range_gpt(model, mask_max, fc_vals, tao)
     t = int(mask_max.shape[0]-torch.count_nonzero(mask_max))
     print("Total Masked :", t)
     acc = evaluate_gpt2_classification(model, dataset, tokenizer)
