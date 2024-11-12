@@ -5,11 +5,21 @@ import numpy as np
 from utilities import evaluate_gpt2_classification as evaluate_gpt2_classification, mask_range_gpt,compute_masks, reset_gpt
 import torch  
 
-dataset_name = "fancyzhx/dbpedia_14"
+dataset_name = "PolyAI/banking77"
 
-text_tag = "content"
+text_tag = "text"
 
-num_classes = 14
+# Load dataset and tokenizer
+dataset = load_dataset(dataset_name)
+
+# #drop unsupervised data
+# from datasets import DatasetDict
+# dataset = DatasetDict({k: v for k, v in dataset.items() if k in ['train', 'test']})
+# print(dataset)
+
+
+per = 0.5
+num_classes = 77
 
 tao = 2.5
 # tao = torch.inf
@@ -28,8 +38,6 @@ if torch.cuda.is_available():  # PyTorch-specific
 import torch
 
 torch.autograd.set_detect_anomaly(True)
-# Load dataset
-dataset = load_dataset(dataset_name)
 # Load tokenizer
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 
@@ -68,7 +76,7 @@ def format_data(examples):
     for text, label in zip(examples[text_tag], examples['label']):
         # Convert label to string
         
-        tok_text = tokenizer.encode(text, max_length=120, truncation=True)
+        tok_text = tokenizer.encode(text, max_length=400, truncation=True)
         text = tokenizer.decode(tok_text)
         label_str = dataset['train'].features['label'].int2str(label)
         formatted_text = f"Classify emotion: {text}{tokenizer.sep_token}"#{label_str}{tokenizer.eos_token}"
@@ -81,7 +89,7 @@ def tokenize_and_prepare(examples):
     tokenized = tokenizer(
         examples['formatted_text'],
         padding='max_length',
-        max_length=128,
+        max_length=408,
         truncation=True,
         return_tensors="pt"
     )
@@ -167,14 +175,14 @@ max_comp_conf = []
 diff_from_max = []
 total_masked = []
 
-tokenized_dataset = tokenized_dataset['test']#.shuffle().select(range(200))
+tokenized_dataset1 = tokenized_dataset['test']#.shuffle().select(range(200))
+recording_dataset = tokenized_dataset['train']#.shuffle().select(range(200))
 for j in range(0,num_classes):
     model = reset_gpt(model)
-    dataset = tokenized_dataset.filter(lambda x: x['label'] in [j])
-    dataset_complement = tokenized_dataset.filter(lambda x: x['label'] not in [j])
+    dataset = tokenized_dataset1.filter(lambda x: x['label'] in [j])
+    dataset_recording = recording_dataset.filter(lambda x: x['label'] in [j])
+    dataset_complement = tokenized_dataset1.filter(lambda x: x['label'] not in [j])
     
-    if(j==6):
-        dataset = tokenized_dataset
 
     class_labels.append(f"Class {j}")
     acc = evaluate_gpt2_classification(model, dataset, tokenizer)
@@ -188,11 +196,11 @@ for j in range(0,num_classes):
         base_comp_conf.append(acc[1])
         
     print("Recording activations...")
-    fc_vals = evaluate_gpt2_classification(model, dataset, tokenizer)
+    fc_vals = evaluate_gpt2_classification(model, dataset_recording, tokenizer)
     fc_vals = fc_vals[2]
 
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.5)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,per)
     mask_std = mask_max_low_std
     print("Masking MAX...")
     model = mask_range_gpt(model, mask_max, fc_vals, tao)

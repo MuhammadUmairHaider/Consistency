@@ -17,11 +17,13 @@ label_mapping = {
 }
 
 # Load the dataset from disk
-correct_dataset = load_from_disk('correct_predictions_dataset')
+correct_dataset = load_dataset('json', data_files='correct_predictions.json')
+
+correct_dataset = correct_dataset['train']
 num_classes = 6
 
-# tao = 2.5
-tao = torch.inf
+tao = 2.5
+# tao = torch.inf
 
 
 # Set random seed

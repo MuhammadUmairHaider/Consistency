@@ -3,13 +3,27 @@ from transformers import GPT2Tokenizer, GPT2LMHeadModel, Trainer, TrainingArgume
 import torch
 
 
-dataset_name = "fancyzhx/dbpedia_14"
+dataset_name = "PolyAI/banking77"
 
-text_tag = "content"
+text_tag = "text"
 
 
 # Load dataset and tokenizer
 dataset = load_dataset(dataset_name)
+
+# dataset_renamed = {}
+# dataset_renamed["train"] = dataset["train"]
+# dataset_renamed["test"] = dataset["validation"]
+
+# # Convert the dictionary back to a DatasetDict
+# from datasets import DatasetDict
+# dataset = DatasetDict(dataset_renamed)
+
+
+# #drop unsupervised data
+# from datasets import DatasetDict
+# dataset = DatasetDict({k: v for k, v in dataset.items() if k in ['train', 'validation']})
+# dataset.rename_split("validation", "test")
 
 print(dataset)
 
@@ -73,7 +87,11 @@ def format_data(examples):
     for text, label in zip(examples[text_tag], examples['label']):
         # Convert label to string
         
-        tok_text = tokenizer.encode(text, max_length=120, truncation=True)
+        tok_text = tokenizer.encode(text, max_length=400, truncation=True)
+        
+        #length of max tokens
+        
+        
         text = tokenizer.decode(tok_text)
         label_str = dataset['train'].features['label'].int2str(label)
         formatted_text = f"Classify : {text}{tokenizer.sep_token}{label_str}{tokenizer.eos_token}"
@@ -86,7 +104,7 @@ def tokenize_and_prepare(examples):
     tokenized = tokenizer(
         examples['formatted_text'],
         padding='max_length',
-        max_length=128,
+        max_length=408,
         truncation=True,
         return_tensors="pt"  # Ensure outputs are returned as tensors
     )
@@ -130,8 +148,8 @@ training_args = TrainingArguments(
     evaluation_strategy="epoch",
     learning_rate=2e-5,
     weight_decay=0.01,
-    per_device_train_batch_size=64,
-    per_device_eval_batch_size=64,
+    per_device_train_batch_size=24,
+    per_device_eval_batch_size=24,
     num_train_epochs=3,
     logging_dir='./logs',
 )
