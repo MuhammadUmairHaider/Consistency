@@ -14,4 +14,3 @@ results/
 correct_predictions_dataset/
 *.safetensors
 *.pyc
-*.csv

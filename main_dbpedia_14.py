@@ -6,7 +6,7 @@ from prettytable import PrettyTable
 # from model_distill_bert import getmodel
 from utilities import compute_accuracy, compute_masks, mask_bert, get_model_bert, record_activations, mask_range_bert
 
-batch_size = 1024
+batch_size = 256
 mask_layer = 11
 text_tag = "content"
 compliment = True
@@ -41,18 +41,19 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load the dataset
 dataset_all = load_dataset("fancyzhx/dbpedia_14")
+
+print(dataset_all)
 # Select the train split
-dataset_all = dataset_all['train']
+dataset_all1 = dataset_all['test']
+record_dataset = dataset_all['train']
 avg_intersection = []
 for j in range(0,14):
     model = get_model_bert("fabriceyhc/bert-base-uncased-dbpedia_14", mask_layer)
     # model = torch.compile(model)
     # model = AutoModelForSequenceClassification.from_pretrained("fabriceyhc/bert-base-uncased-dbpedia_14")
-    dataset = dataset_all.filter(lambda x: x['label'] in [j])
-    dataset_complement = dataset_all.filter(lambda x: x['label'] not in [j])
-    
-    if(j==14):
-        dataset = dataset_all
+    dataset = dataset_all1.filter(lambda x: x['label'] in [j])
+    dataset_complement = dataset_all1.filter(lambda x: x['label'] not in [j])
+    dataset_record = record_dataset.filter(lambda x: x['label'] in [j])
 
     class_labels.append(f"Class {j}")
     acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size)
@@ -69,15 +70,15 @@ for j in range(0,14):
         aug_dataset.extend(acc[2])
         
     print("Recording activations...")
-    fc_vals = record_activations(dataset, model, tokenizer, text_tag=text_tag, mask_layer=mask_layer, batch_size=batch_size)
+    fc_vals = record_activations(dataset_record, model, tokenizer, text_tag=text_tag, mask_layer=mask_layer, batch_size=batch_size)
 
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,1)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.5)
     mask_std = mask_max_low_std
     print("Masking STD...")
     # model = mask_bert(model,mask_std)
-
-    model = mask_range_bert(model, mask_std, fc_vals)        
+    tao = 2.5
+    model = mask_range_bert(tao,model, mask_std, fc_vals)        
     
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
     print("Total Masked :", t)
@@ -93,10 +94,11 @@ for j in range(0,14):
         print("accuracy after masking STD on complement: ", acc[0], acc[1])
         std_comp_acc.append(acc[0])
         std_comp_conf.append(acc[1])
-
+    model = get_model_bert("fabriceyhc/bert-base-uncased-dbpedia_14", mask_layer)
+    tao = torch.inf
     print("Masking MAX...")
     # model = mask_bert(model,mask_max)
-    model = mask_range_bert(model, mask_max, fc_vals)
+    model = mask_range_bert(tao,model, mask_max, fc_vals)
     t = int(mask_max.shape[0]-torch.count_nonzero(mask_max))
     print("Total Masked :", t)
     acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size, in_aug_dataset=aug_dataset[:len(dataset)])

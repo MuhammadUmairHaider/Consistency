@@ -3,13 +3,15 @@ from transformers import GPT2Tokenizer, GPT2LMHeadModel, Trainer, TrainingArgume
 import torch
 
 
-dataset_name = "PolyAI/banking77"
+dataset_name = "clinc/clinc_oos"
 
 text_tag = "text"
 
 
 # Load dataset and tokenizer
-dataset = load_dataset(dataset_name)
+dataset = load_dataset("clinc/clinc_oos", "plus")
+
+lab = "intent"
 
 # dataset_renamed = {}
 # dataset_renamed["train"] = dataset["train"]
@@ -54,7 +56,7 @@ tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 
 special_tokens_dict = {}
 new_tokens = []
-label2text = dataset['train'].features['label'].names
+label2text = dataset['train'].features[lab].names
 
 for label in label2text:
     # Create special token format (with and without space)
@@ -84,7 +86,7 @@ tokenizer.add_special_tokens(special_tokens)
 
 def format_data(examples):
     formatted_texts = []
-    for text, label in zip(examples[text_tag], examples['label']):
+    for text, label in zip(examples[text_tag], examples[lab]):
         # Convert label to string
         
         tok_text = tokenizer.encode(text, max_length=400, truncation=True)
@@ -93,7 +95,7 @@ def format_data(examples):
         
         
         text = tokenizer.decode(tok_text)
-        label_str = dataset['train'].features['label'].int2str(label)
+        label_str = dataset['train'].features[lab].int2str(label)
         formatted_text = f"Classify : {text}{tokenizer.sep_token}{label_str}{tokenizer.eos_token}"
         formatted_texts.append(formatted_text)
     return {'formatted_text': formatted_texts}
