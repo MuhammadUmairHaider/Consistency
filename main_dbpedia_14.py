@@ -78,7 +78,7 @@ for j in range(0,14):
     print("Masking STD...")
     # model = mask_bert(model,mask_std)
     tao = 2.5
-    model = mask_range_bert(tao,model, mask_std, fc_vals)        
+    model = mask_range_bert(tao,model, mask_max, fc_vals)        
     
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
     print("Total Masked :", t)
