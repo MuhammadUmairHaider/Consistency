@@ -7,7 +7,7 @@ from prettytable import PrettyTable
 from utilities import compute_accuracy, compute_masks, mask_distillbert, get_model_distilbert, record_activations, mask_range_distilbert
 
 batch_size = 256
-mask_layer = 5
+mask_layer = 0
 text_tag = "text"
 compliment = True
 results_table = PrettyTable()
@@ -51,6 +51,8 @@ for j in range(0,6):
     dataset = dataset_all1.filter(lambda x: x['label'] in [j])
     dataset_complement = dataset_all1.filter(lambda x: x['label'] not in [j])
     dataset_record = record_dataset.filter(lambda x: x['label'] in [j])
+    
+    dataset2 = record_dataset.filter(lambda x: x['label'] not in [j])
 
     class_labels.append(f"Class {j}")
     acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size)
@@ -68,6 +70,7 @@ for j in range(0,6):
         
     print("Recording activations...")
     fc_vals = record_activations(dataset_record, model, tokenizer, text_tag=text_tag, mask_layer=mask_layer, batch_size=batch_size)
+    fc_vals2 = record_activations(dataset2, model, tokenizer, text_tag=text_tag, mask_layer=mask_layer, batch_size=batch_size)
 
         
     mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,0.5)
@@ -78,7 +81,7 @@ for j in range(0,6):
     
     # model = mask_distillbert(model,mask_std)
     tao = 2.5
-    model = mask_range_distilbert(tao,model, mask_max, fc_vals)        
+    model = mask_range_distilbert(tao,model, mask_max, fc_vals, fc_vals2)        
     
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
     print("Total Masked :", t)
@@ -98,7 +101,7 @@ for j in range(0,6):
     tao = torch.inf
     print("Masking MAX...")
     # model = mask_distillbert(model,mask_max)
-    model = mask_range_distilbert(tao,model, mask_max, fc_vals)
+    model = mask_range_distilbert(tao,model, mask_max, fc_vals, fc_vals2)
     t = int(mask_max.shape[0]-torch.count_nonzero(mask_max))
     print("Total Masked :", t)
     acc = compute_accuracy(dataset, model, tokenizer, text_tag, batch_size=batch_size, in_aug_dataset=aug_dataset[:len(dataset)])

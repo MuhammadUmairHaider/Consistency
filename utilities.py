@@ -311,8 +311,10 @@ def compute_max_low_std_mask(mean_vals, std_vals, percent):
     # Compute mask
     return compute_max_mask(mean_vals_filtered, percent)
 
-def mask_range_distilbert(tao,model, mask, fc_vals):
+def mask_range_distilbert(tao,model, mask, fc_vals, fc_vals2):
+    
     mean = torch.tensor(np.mean(fc_vals, axis=0))
+    mean2 = torch.tensor(np.mean(fc_vals2, axis=0))
     std = torch.tensor(np.std(fc_vals, axis=0))
     mask = mask.to(torch.bool)
     lower_bound = torch.full_like(mean, torch.inf)
@@ -322,6 +324,7 @@ def mask_range_distilbert(tao,model, mask, fc_vals):
     
     model.distilbert.transformer.mask_layer.lower_bound = lower_bound.to(device)
     model.distilbert.transformer.mask_layer.upper_bound = upper_bound.to(device)
+    model.distilbert.transformer.mask_layer.replacement_values = mean2.to(device)
     
     return model
 
@@ -533,7 +536,7 @@ def collate_fn(batch):
     return {
         'input_ids': torch.stack([torch.tensor(item['input_ids']) for item in batch]),
         'attention_mask': torch.stack([torch.tensor(item['attention_mask']) for item in batch]),
-        'label': torch.stack([torch.tensor(item['label']) for item in batch])
+        'intent': torch.stack([torch.tensor(item['intent']) for item in batch])
     }
 
 
