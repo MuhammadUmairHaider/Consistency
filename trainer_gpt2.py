@@ -3,15 +3,15 @@ from transformers import GPT2Tokenizer, GPT2LMHeadModel, Trainer, TrainingArgume
 import torch
 
 
-dataset_name = "clinc/clinc_oos"
+dataset_name = "fancyzhx/dbpedia_14"
 
-text_tag = "text"
+text_tag = "content"
 
 
 # Load dataset and tokenizer
-dataset = load_dataset("clinc/clinc_oos", "plus")
+dataset = load_dataset("fancyzhx/dbpedia_14")
 
-lab = "intent"
+lab = "label"
 
 # dataset_renamed = {}
 # dataset_renamed["train"] = dataset["train"]
