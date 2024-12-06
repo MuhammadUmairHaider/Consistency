@@ -7,30 +7,28 @@ import numpy as np
 from utilities import evaluate_gpt2_classification as evaluate_gpt2_classification, mask_range_gpt,compute_masks, reset_gpt
 import torch  
 
-dataset_name = "clinc/clinc_oos"
+dataset_name = "fancyzhx/ag_news"
 
 text_tag = "text"
 
 # Load dataset and tokenizer
-dataset = load_dataset("clinc/clinc_oos", "plus")
-
-# #drop unsupervised data
-# from datasets import DatasetDict
-# dataset = DatasetDict({k: v for k, v in dataset.items() if k in ['train', 'test']})
-print(dataset)
 
 
-layer = 11
-
-per = 0.5
-num_classes = 150
+tables = []
+# layer = 11
+# for layer in range(0,12):
+per = 0.2
+print("Percentage: ", per)
+num_classes = 4
 
 # tao = 2.5
 
-lab = "intent"
+lab = "label"
 # tao = torch.inf
 
+dataset = load_dataset(dataset_name)
 
+print(dataset)
 # Set random seed
 seed_value = 42  # or any other integer
 
@@ -156,7 +154,7 @@ from prettytable import PrettyTable
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.tensor")
 
-batch_size = 256
+batch_size = 512
 # mask_layer = 5
 compliment = True
 results_table = PrettyTable()
@@ -190,7 +188,7 @@ tokenized_dataset = concatenate_datasets([tokenized_dataset['train'], tokenized_
 dataset_length = len(tokenized_dataset)
 
 # Calculate split index
-split_index = int(dataset_length * 0.5)  # 80% for training
+split_index = int(dataset_length * 0.2)  # 80% for training
 
 # Create the splits using dataset slicing
 tokenized_dataset1 = tokenized_dataset.select(range(split_index))  # training set
@@ -221,11 +219,11 @@ for j in range(0,num_classes):
     fc_vals = fc_vals[2]
 
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max = compute_masks(fc_vals,per)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off = compute_masks(fc_vals,per)
     mask_std = mask_max_low_std
     print("Masking STD...")
     # model = mask_distillbert(model,mask_std)
-    tao = 2.5
+    tao = torch.tensor(2.5)
     model = mask_range_gpt(model, mask_max, fc_vals, tao)        
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
     print("Total Masked :", t)
@@ -275,6 +273,7 @@ for j in range(0,num_classes):
         ])            
 # print("Layer ", mask_layer)
 print(results_table)
+tables.append(results_table)
 # print("Layer ", mask_layer)
 print("Average Base Accuracy: ",round(sum(base_accuracies)/len(base_accuracies), 4))
 print("Average Base Confidence: ", round(sum(base_confidences)/len(base_confidences), 4))
@@ -282,3 +281,6 @@ print("Average MAX Accuracy: ", round(sum(max_accuracies)/len(max_accuracies), 4
 print("Average MAX Confidence: ", round(sum(max_confidences)/len(max_confidences), 4))
 print("Average MAX Complement Accuracy: ", round(sum(max_comp_acc)/len(max_comp_acc), 4))
 print("Average MAX Complement Confidence: ", round(sum(max_comp_conf)/len(max_comp_conf), 4))
+
+for table in tables:
+print(table)

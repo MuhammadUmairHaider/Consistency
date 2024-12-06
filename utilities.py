@@ -172,8 +172,9 @@ def compute_masks(fc_vals, percent):
     mask_std_high_max = compute_std_high_max_mask(mean_vals_tensor, std_vals_tensor, percent)
     mask_max_high_std = comute_max_high_std_mask(mean_vals_tensor, std_vals_tensor, percent)
     # mask_intersection = compute_intersection_mask(mask_max, mask_std, percent)
+    mask_max_random_off = compute_max_random_off(mean_vals_tensor, percent)
     
-    return mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max
+    return mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off
 
 
 def compute_intersection_mask(mask1: torch.Tensor, mask2: torch.Tensor, percent: float) -> torch.Tensor:
@@ -303,6 +304,24 @@ def compute_max_low_std_mask(mean_vals, std_vals, percent):
     # Create a mask for bottom 50% std values
     bottom_50_percent_std_mask = torch.zeros_like(std_vals, dtype=torch.bool)
     bottom_50_percent_std_mask[bottom_50_percent_std_indices] = True
+    
+    # Filter mean values
+    mean_vals_filtered = mean_vals.clone()
+    mean_vals_filtered[~bottom_50_percent_std_mask] = float('-inf')
+    
+    # Compute mask
+    return compute_max_mask(mean_vals_filtered, percent)
+
+def compute_max_random_off(mean_vals, percent):
+    # Get indices of bottom 50% std values
+    bottom_50_percent_std_count = int(0.50 * len(mean_vals))
+    #pick random indices
+    random_indices = torch.randperm(len(mean_vals))[:bottom_50_percent_std_count]
+    # bottom_50_percent_std_indices = torch.argsort(std_vals)[:bottom_50_percent_std_count]
+    
+    # Create a mask for bottom 50% std values
+    bottom_50_percent_std_mask = torch.zeros_like(mean_vals, dtype=torch.bool)
+    bottom_50_percent_std_mask[random_indices] = True
     
     # Filter mean values
     mean_vals_filtered = mean_vals.clone()
@@ -536,7 +555,7 @@ def collate_fn(batch):
     return {
         'input_ids': torch.stack([torch.tensor(item['input_ids']) for item in batch]),
         'attention_mask': torch.stack([torch.tensor(item['attention_mask']) for item in batch]),
-        'intent': torch.stack([torch.tensor(item['intent']) for item in batch])
+        'label': torch.stack([torch.tensor(item['label']) for item in batch])
     }
 
 
@@ -722,17 +741,82 @@ def manual_generate_llma(model, input_ids, attention_mask, max_length):
 
 from tqdm.auto import tqdm
 import torch
+# def evaluate_llma_classification(model, eval_dataset, tokenizer):
+
+#     # Create label mapping
+#     label_mapping = {
+#         0: "sadness",
+#         1: "joy",
+#         2: "love",
+#         3: "anger",
+#         4: "fear",
+#         5: "surprise"
+#     }
+
+
+#     # Configure progress bar for the combined dataset
+#     progress_bar = tqdm(eval_dataset, desc="Processing examples")
+
+#     i = 0
+#     correct = 0
+#     confidence = 0
+#     fc_vals = []
+#     model.to('cuda')
+#     model.eval()
+
+#     for example in progress_bar:
+#         prompt = '''Choose from one of these: anger, fear, joy, love, sadness, surprise
+#     {{"I can't believe how wonderful this day has been!":joy}}
+#     {{"Missing you more with each passing day":sadness}}
+#     {{"How dare they treat me like this!":anger}}
+#     {{"I'm getting butterflies just thinking about tomorrow":fear}}
+#     {{"You mean everything to me": ["love"]}}
+#     {{"I didn't expect this to happen at all":surprise}}
+#     {{"{}":'''.format(example['text'])
+        
+#         input_ids = tokenizer([prompt, prompt], return_tensors='pt')
+        
+#         # Generate output
+#         output = manual_generate_llma(
+#             model, 
+#             input_ids['input_ids'].to('cuda'), 
+#             input_ids['attention_mask'].to('cuda'), 
+#             input_ids['input_ids'].shape[1]+5
+#         )
+        
+#             # Get predicted label
+#         predicted_label = tokenizer.decode(
+#             output[0][0][input_ids['input_ids'].shape[1]:]
+#         ).split('}')[0]
+        
+#         # Get true label text using the mapping
+#         true_label_text = label_mapping[example['label']]
+        
+#         i += 1
+#         if true_label_text == predicted_label:
+#             correct += 1
+            
+#         # else:
+#         #     print(f"Text: {example['text']}, True label: {true_label_text}, Predicted label: {predicted_label}")
+        
+#         label_tok = tokenizer.encode(true_label_text)[1]
+        
+#         # Update progress bar description with current accuracy
+#         progress_bar.set_description(f"Accuracy: {round(correct/i,3)*100}%")
+#         confidence += output[1][0][0][label_tok].item()
+#         fc_vals.append(output[2][0][0].squeeze())
+        
+        
+
+#     return round(correct/i,4), round(confidence/i,4), fc_vals
+
+
+
 def evaluate_llma_classification(model, eval_dataset, tokenizer):
 
     # Create label mapping
-    label_mapping = {
-        0: "sadness",
-        1: "joy",
-        2: "love",
-        3: "anger",
-        4: "fear",
-        5: "surprise"
-    }
+    label_mapping = label_mapping = {0: 'negative', 1: 'positive'}
+
 
 
     # Configure progress bar for the combined dataset
@@ -746,14 +830,18 @@ def evaluate_llma_classification(model, eval_dataset, tokenizer):
     model.eval()
 
     for example in progress_bar:
-        prompt = '''Choose from one of these: anger, fear, joy, love, sadness, surprise
-    {{"I can't believe how wonderful this day has been!":joy}}
-    {{"Missing you more with each passing day":sadness}}
-    {{"How dare they treat me like this!":anger}}
-    {{"I'm getting butterflies just thinking about tomorrow":fear}}
-    {{"You mean everything to me": ["love"]}}
-    {{"I didn't expect this to happen at all":surprise}}
-    {{"{}":'''.format(example['text'])
+        prompt = '''Choose from one of these sentiments: negative, positive. These are your only choises. Be careful distinguishing between similar sentiments. These are real reviews.
+{{badly-rendered cgi effects :negative}}
+{{it feels more like the pilot episode of a tv series than a feature film :negative}}
+{{if you liked the previous movies in the series :positive}}
+{{required to balance all the formulaic equations in the long-winded heist comedy who is cletis tout ? :negative}}
+{{a load of clams left in the broiling sun for a good three days :negative}}
+{{if you liked the previous movies in the series , you 'll have a good time with this one too :positive}}
+{{it 's a long way from orwell 's dark , intelligent warning cry ( 1984 ) to the empty stud knockabout of equilibrium , and what once was conviction is now affectation :positive}}
+{{a smoother , more focused :positive}}
+{{the genuinely funny jokes are few and far between :negative}}
+{{have stayed there :positive}}
+{{"{}":"'''.format(example['text'])
         
         input_ids = tokenizer([prompt, prompt], return_tensors='pt')
         
@@ -762,13 +850,15 @@ def evaluate_llma_classification(model, eval_dataset, tokenizer):
             model, 
             input_ids['input_ids'].to('cuda'), 
             input_ids['attention_mask'].to('cuda'), 
-            input_ids['input_ids'].shape[1]+5
+            input_ids['input_ids'].shape[1]+8
         )
         
             # Get predicted label
         predicted_label = tokenizer.decode(
             output[0][0][input_ids['input_ids'].shape[1]:]
         ).split('}')[0]
+        
+        predicted_label = predicted_label.strip('"')
         
         # Get true label text using the mapping
         true_label_text = label_mapping[example['label']]
