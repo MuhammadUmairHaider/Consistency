@@ -138,6 +138,18 @@ def get_model_bert(directory_path, layer):
 import numpy as np
 import torch
 
+
+def compute_avg_std(fc_vals, mask):
+    fc_vals_array = np.array(fc_vals)
+    
+    normalized_vals = (fc_vals_array - fc_vals_array.min(axis=0)) / (fc_vals_array.max(axis=0) - fc_vals_array.min(axis=0))
+    
+    std_vals = np.std(normalized_vals, axis=0)
+    
+    return np.mean(std_vals[mask.bool()])
+
+
+
 def compute_masks(fc_vals, percent):
     # Convert input to numpy array
     fc_vals_array = np.array(fc_vals)
@@ -174,7 +186,9 @@ def compute_masks(fc_vals, percent):
     # mask_intersection = compute_intersection_mask(mask_max, mask_std, percent)
     mask_max_random_off = compute_max_random_off(mean_vals_tensor, percent)
     
-    return mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off
+    mask_random = compute_mask_random_off(mean_vals_tensor, percent)
+    
+    return mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off, mask_random
 
 
 def compute_intersection_mask(mask1: torch.Tensor, mask2: torch.Tensor, percent: float) -> torch.Tensor:
@@ -227,7 +241,7 @@ def compute_intersection_mask(mask1: torch.Tensor, mask2: torch.Tensor, percent:
     return result_mask
 
 def compute_max_mask(values, percent):
-    sorted_indices = torch.argsort(values, descending=True)
+    sorted_indices = torch.argsort(values, descending=False)
     mask_count = int(percent * len(values))
     mask = torch.ones_like(values)
     mask[sorted_indices[:mask_count]] = 0.0
@@ -311,6 +325,33 @@ def compute_max_low_std_mask(mean_vals, std_vals, percent):
     
     # Compute mask
     return compute_max_mask(mean_vals_filtered, percent)
+
+def compute_mask_random_off(mean_vals, percent):
+
+    # Get indices of bottom 20% values
+    bottom_20_percent_count = int(0.20 * len(mean_vals))
+    bottom_20_percent_indices = torch.argsort(mean_vals)[:bottom_20_percent_count]
+    
+    # Create set of indices excluding bottom 20%
+    all_indices = set(range(len(mean_vals)))
+    excluded_indices = set(bottom_20_percent_indices.tolist())
+    available_indices = list(all_indices - excluded_indices)
+    
+    # Randomly select from remaining indices
+    num_to_select = int(percent * len(mean_vals))
+    num_to_select = min(num_to_select, len(available_indices))  # Ensure we don't select more than available
+    
+    if num_to_select > 0:
+        selected_positions = torch.randperm(len(available_indices))[:num_to_select]
+        selected_indices = [available_indices[i] for i in selected_positions]
+    else:
+        selected_indices = []
+    
+    # Create final mask
+    mask = torch.ones_like(mean_vals, dtype=torch.bool)
+    mask[selected_indices] = 0.0
+    
+    return mask
 
 def compute_max_random_off(mean_vals, percent):
     # Get indices of bottom 50% std values
