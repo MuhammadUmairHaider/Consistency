@@ -138,6 +138,14 @@ def get_model_bert(directory_path, layer):
 import numpy as np
 import torch
 
+def compute_mask_probe(weights, percent):
+    sorted_indices = torch.argsort(weights, descending=True)
+    mask_count = int(percent * len(weights))
+    mask = torch.ones_like(weights)
+    mask[sorted_indices[:mask_count]] = 0.0
+    return mask
+
+
 
 def compute_avg_std(fc_vals, mask):
     fc_vals_array = np.array(fc_vals)
@@ -158,14 +166,14 @@ def compute_masks(fc_vals, percent):
     
     # Compute statistics
     mean_vals = np.mean(np.abs(fc_vals_array), axis=0)
-    std_vals = np.std(normalized_vals, axis=0)
+    std_vals = np.std(fc_vals_array, axis=0)
     min_vals = np.min(fc_vals_array, axis=0)
     max_vals = np.max(fc_vals_array, axis=0)
     
     # Normalize standard deviation
     std_vals_normalized = (std_vals - min_vals) / (max_vals - min_vals)
     
-    std_vals_normalized = std_vals
+    # std_vals_normalized = std_vals
     
     # Convert to PyTorch tensors
     mean_vals_tensor = torch.from_numpy(mean_vals)
@@ -241,7 +249,7 @@ def compute_intersection_mask(mask1: torch.Tensor, mask2: torch.Tensor, percent:
     return result_mask
 
 def compute_max_mask(values, percent):
-    sorted_indices = torch.argsort(values, descending=False)
+    sorted_indices = torch.argsort(values, descending=True)
     mask_count = int(percent * len(values))
     mask = torch.ones_like(values)
     mask[sorted_indices[:mask_count]] = 0.0
