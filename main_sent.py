@@ -73,7 +73,7 @@ for j in range(0,6):
     fc_vals2 = record_activations(dataset2, model, tokenizer, text_tag=text_tag, mask_layer=mask_layer, batch_size=batch_size)
 
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off, mask_random = compute_masks(fc_vals,0.2)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off, mask_random = compute_masks(fc_vals,0.3)
     
     print('Non Mask AVG spread: ', compute_avg_std(fc_vals, (~mask_random.bool()).float()))
     
@@ -88,8 +88,8 @@ for j in range(0,6):
     
     
     # model = mask_distillbert(model,mask_std)
-    tao = 2.5
-    model = mask_range_distilbert(tao,model, mask_max, fc_vals, fc_vals2)
+    tao = torch.inf
+    model = mask_range_distilbert(tao,model, mask_std, fc_vals, fc_vals2)
     
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
     print("Total Masked :", t)

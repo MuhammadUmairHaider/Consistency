@@ -139,7 +139,7 @@ import numpy as np
 import torch
 
 def compute_mask_probe(weights, percent):
-    sorted_indices = torch.argsort(weights, descending=True)
+    sorted_indices = torch.argsort(torch.abs(weights), descending=True)
     mask_count = int(percent * len(weights))
     mask = torch.ones_like(weights)
     mask[sorted_indices[:mask_count]] = 0.0
@@ -147,31 +147,74 @@ def compute_mask_probe(weights, percent):
 
 
 
-def compute_avg_std(fc_vals, mask):
+def compute_avg_mad(fc_vals, mask):
     fc_vals_array = np.array(fc_vals)
     
-    normalized_vals = (fc_vals_array - fc_vals_array.min(axis=0)) / (fc_vals_array.max(axis=0) - fc_vals_array.min(axis=0))
+    # normalized_vals = (fc_vals_array - fc_vals_array.min(axis=0)) / (fc_vals_array.max(axis=0) - fc_vals_array.min(axis=0))
     
-    std_vals = np.std(normalized_vals, axis=0)
+    std_vals = mad(fc_vals_array)
     
     return np.mean(std_vals[mask.bool()])
 
+
+def mad(data):
+    median = np.median(data, axis=0)
+    deviations = np.abs(data - median)
+    mad_value = np.median(deviations, axis=0)
+    return mad_value
+
+def z_score(data):
+    
+    #4200,768
+    """
+    Calculate z-scores along axis 0 (columns) of a 2D array.
+    
+    Parameters:
+    data : numpy.ndarray
+        2D input array where rows are observations and columns are features
+        
+    Returns:
+    numpy.ndarray
+        Array of same shape as input with z-scores calculated for each column
+    """
+    # Calculate mean along axis 0
+    mean = np.mean(data, axis=0)
+    
+    #768
+    
+    # Calculate standard deviation along axis 0
+    std = np.std(data, axis=0)  # ddof=1 for sample standard deviation
+    
+    # Avoid division by zero
+    # std = np.where(std == 0, 1, std)
+    
+    # Calculate z-scores
+    
+    # 4200,768
+    z_scores = (data - mean) / std
+    z_scores = np.mean(np.abs(z_scores), axis=0)
+    
+    return z_scores
 
 
 def compute_masks(fc_vals, percent):
     # Convert input to numpy array
     fc_vals_array = np.array(fc_vals)
     
-    normalized_vals = (fc_vals_array - fc_vals_array.min(axis=0)) / (fc_vals_array.max(axis=0) - fc_vals_array.min(axis=0))
+    # normalized_vals = (fc_vals_array - fc_vals_array.min(axis=0)) / (fc_vals_array.max(axis=0) - fc_vals_array.min(axis=0))
     
     # Compute statistics
     mean_vals = np.mean(np.abs(fc_vals_array), axis=0)
     std_vals = np.std(fc_vals_array, axis=0)
-    min_vals = np.min(fc_vals_array, axis=0)
-    max_vals = np.max(fc_vals_array, axis=0)
+    
+    
+    # 500, 768 -> 768
+    # 
+    min_vals = np.min(std_vals, axis=0)
+    max_vals = np.max(std_vals, axis=0)
     
     # Normalize standard deviation
-    std_vals_normalized = (std_vals - min_vals) / (max_vals - min_vals)
+    std_vals_normalized = mad(fc_vals_array)#(std_vals - min_vals) / (max_vals - min_vals)
     
     # std_vals_normalized = std_vals
     
@@ -266,37 +309,17 @@ def comute_max_high_std_mask(mean_vals, std_vals, percent):
     
     
     
-    bottom_50_percent_max_count = int(0.20 * len(mean_vals))
-    bottom_50_percent_max_indices = torch.argsort(mean_vals)[:bottom_50_percent_max_count]
+    # Get indices of bottom 50% std values
+    bottom_50_percent_std_count = int(0.50 * len(std_vals))
+    bottom_50_percent_std_indices = torch.argsort(std_vals, descending=True)[:bottom_50_percent_std_count]
     
     # Create a mask for bottom 50% std values
-    bottom_50_percent_max_mask = torch.zeros_like(mean_vals, dtype=torch.bool)
-    bottom_50_percent_max_mask[bottom_50_percent_max_indices] = True
-    
-    # Filter mean values
-    std_vals_filtered = std_vals.clone()
-    std_vals_filtered[bottom_50_percent_max_mask] = float('inf')
-    
-    std_vals = std_vals_filtered
-    
-    
-    # Get indices of top 50% std values
-    top_50_percent_std_count = int(0.5* len(std_vals))
-    top_50_percent_std_indices = torch.argsort(std_vals)[:top_50_percent_std_count]
-    
-    #random indices
-    random_indices = torch.randperm(len(std_vals))[:top_50_percent_std_count]
-    
-    # Create a mask for top 50% std values
-    top_50_percent_std_mask = torch.zeros_like(std_vals, dtype=torch.bool)
-    top_50_percent_std_mask[top_50_percent_std_indices] = True
-    
-    
-    
+    bottom_50_percent_std_mask = torch.zeros_like(std_vals, dtype=torch.bool)
+    bottom_50_percent_std_mask[bottom_50_percent_std_indices] = True
     
     # Filter mean values
     mean_vals_filtered = mean_vals.clone()
-    mean_vals_filtered[top_50_percent_std_mask] = float('-inf')
+    mean_vals_filtered[~bottom_50_percent_std_mask] = float('-inf')
     
     # Compute mask
     return compute_max_mask(mean_vals_filtered, percent)
@@ -635,6 +658,7 @@ def evaluate_gpt2_classification(lab ,model, eval_dataset, tokenizer, batch_size
     all_hidden = []
     correct = 0
     j = 0
+    return_dataset = []
     dataloader = torch.utils.data.DataLoader(eval_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     for item in tqdm(dataloader, desc="Evaluating"):
        input_ids = torch.tensor(item['input_ids']).to(device)
@@ -650,11 +674,12 @@ def evaluate_gpt2_classification(lab ,model, eval_dataset, tokenizer, batch_size
             j += 1
             if predicted_label == true_label:
                 correct += 1
+                return_dataset.append(item)
             all_hidden.append(fc.numpy())
     if j == 0:
         return 0, 0, []
             
-    return round(correct/j,4), round(confidence/j,4), all_hidden
+    return round(correct/j,4), round(confidence/j,4), all_hidden, return_dataset
     
 
 
