@@ -4,13 +4,13 @@ from sklearn.model_selection import train_test_split
 from transformers import GPT2Tokenizer, DataCollatorForLanguageModeling
 import random
 import numpy as np
-from utilities import evaluate_gpt2_classification as evaluate_gpt2_classification, mask_range_gpt,compute_masks, reset_gpt, compute_mask_probe
+from utilities import evaluate_gpt2_classification as evaluate_gpt2_classification, mask_range_gpt,compute_masks, reset_gpt, compute_mask_probe, mask_gpt2
 import torch  
 from tqdm import tqdm
 
-dataset_name = "fancyzhx/ag_news"
+dataset_name = "stanfordnlp/sst2"
 
-text_tag = "text"
+text_tag = "sentence"
 
 # Load dataset and tokenizer
 
@@ -20,7 +20,7 @@ layer = 11
 # for i in tqdm(range(1, 21)):
 per = 0.3
 print("Percentage: ", per)
-num_classes = 4
+num_classes = 2
 
 # tao = 2.5
 
@@ -30,6 +30,100 @@ lab = "label"
 dataset = load_dataset(dataset_name)
 
 print(dataset)
+
+# print(dataset['train'].features)
+
+
+
+
+
+
+#######################Filter dataset####################
+from datasets import DatasetDict, Dataset, Features, ClassLabel, Value
+import pandas as pd
+
+def sample_balanced_dataset(dataset_dict, max_train_per_class=800, max_test_per_class=200):
+    """
+    Sample a balanced subset while preserving the original feature structure including ClassLabel.
+    """
+    # Store original features
+    original_features = dataset_dict['train'].features
+    
+    # Convert to pandas for sampling
+    train_df = dataset_dict['train'].to_pandas()
+    test_df = dataset_dict['test'].to_pandas()
+    
+    # Group by label
+    train_groups = train_df.groupby('label')
+    test_groups = test_df.groupby('label')
+    
+    sampled_train_dfs = []
+    sampled_test_dfs = []
+    
+    print("\nClass distribution:")
+    print("\nLabel | Label Name | Train Samples | Test Samples | Final Train | Final Test")
+    print("-" * 85)
+    
+    label_names = original_features['label'].names
+    for idx, label_name in enumerate(label_names):
+        train_group = train_groups.get_group(idx)
+        test_group = test_groups.get_group(idx) if idx in test_groups.groups else pd.DataFrame()
+        
+        # Sample with replacement if needed
+        train_replace = len(train_group) < max_train_per_class
+        test_replace = len(test_group) < max_test_per_class
+        
+        sampled_train = train_group.sample(
+            n=min(len(train_group), max_train_per_class),
+            replace=train_replace,
+            random_state=42
+        )
+        
+        if not test_group.empty:
+            sampled_test = test_group.sample(
+                n=min(len(test_group), max_test_per_class),
+                replace=test_replace,
+                random_state=42
+            )
+        else:
+            sampled_test = pd.DataFrame(columns=test_df.columns)
+        
+        sampled_train_dfs.append(sampled_train)
+        sampled_test_dfs.append(sampled_test)
+        
+        print(f"{idx:5d} | {label_name:10s} | {len(train_group):12d} | "
+              f"{len(test_group):11d} | {len(sampled_train):10d} | {len(sampled_test):9d}")
+    
+    # Concatenate all sampled dataframes
+    final_train_df = pd.concat(sampled_train_dfs, ignore_index=True)
+    final_test_df = pd.concat(sampled_test_dfs, ignore_index=True)
+    
+    # Convert back to datasets while preserving the original features
+    final_train_dataset = Dataset.from_pandas(final_train_df, features=original_features)
+    final_test_dataset = Dataset.from_pandas(final_test_df, features=original_features)
+    
+    # Create new DatasetDict
+    sampled_dataset = DatasetDict({
+        'train': final_train_dataset,
+        'test': final_test_dataset
+    })
+    
+    print("\nFinal dataset sizes:")
+    print(f"Train: {len(final_train_dataset)} samples")
+    print(f"Test: {len(final_test_dataset)} samples")
+    
+    # Verify feature structure is preserved
+    print("\nVerifying feature structure:")
+    print(sampled_dataset['train'].features)
+    
+    return sampled_dataset
+
+dataset = sample_balanced_dataset(dataset, max_train_per_class=800, max_test_per_class=200)
+
+###########################################
+
+
+
 # Set random seed
 seed_value = 42  # or any other integer
 
@@ -120,6 +214,8 @@ def tokenize_and_prepare(examples):
         'attention_mask': tokenized['attention_mask'],
         'labels': labels
     }
+    
+dataset = dataset.filter(lambda x: x[lab] != -1)
 # Process the dataset
 formatted_dataset = dataset.map(format_data, batched=True)
 tokenized_dataset = formatted_dataset.map(
@@ -183,43 +279,109 @@ total_masked = []
 #merge test and train set and then shuffle and make splits
 
 # First merge and shuffle
-tokenized_dataset = concatenate_datasets([tokenized_dataset['train'], tokenized_dataset['test']]).shuffle(seed=42)#.select(range(100))
+# tokenized_dataset = concatenate_datasets([tokenized_dataset['train'], tokenized_dataset['test']]).shuffle(seed=42)#.select(range(100))
 
 # Get the total length
-dataset_length = len(tokenized_dataset)
+# dataset_length = len(tokenized_dataset)
 
 
 # Calculate split index
-split_index = int(dataset_length * 0.2)  # 80% for training
+# split_index = int(dataset_length * 0.2)  # 80% for training
 
 # Create the splits using dataset slicing
-tokenized_dataset1 = tokenized_dataset.select(range(split_index))  # training set
-recording_dataset = tokenized_dataset.select(range(split_index, dataset_length))
+tokenized_dataset1 = tokenized_dataset['test']#.shuffle().select(range(200))
+recording_dataset = tokenized_dataset['train']#.shuffle().select(range(200))
 
+    
 
 
 
 all_fc_vals = []
+base_accuracies = []
+base_confidences = []
+base_comp_acc = []
+base_comp_conf = []
 print("Recording activations...")
 for j in range(0,num_classes):
     dataset_recording = recording_dataset.filter(lambda x: x[lab] in [j])
+    dataset = tokenized_dataset1.filter(lambda x: x[lab] in [j])
+    dataset_complement = tokenized_dataset1.filter(lambda x: x[lab] not in [j])
     fc_vals = evaluate_gpt2_classification(lab, model, dataset_recording, tokenizer)
     fc_vals = fc_vals[2]
-    all_fc_vals.append(fc_vals)
+    all_fc_vals.append(np.array(fc_vals))
     
-# save all_fc_vals to file
-import pickle
+    
+    
+    acc = evaluate_gpt2_classification(lab, model, dataset, tokenizer)
+    
+    base_accuracies.append(acc[0])
+    base_confidences.append(acc[1])
+    
+    print("Class ",j, "base accuracy: ", acc[0], acc[1])
+    
+    acc = evaluate_gpt2_classification(lab, model, dataset_complement, tokenizer)
+    
+    base_comp_acc.append(acc[0])
+    base_comp_conf.append(acc[1])
+    
+    print("Class ",j, "complement base accuracy: ", acc[0], acc[1])
+    
+#Probless
+mask_all = []
+for fc_vals in all_fc_vals:
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off, mask_random = compute_masks(fc_vals, 0.3)
+    
+    mask_all.append(~mask_max.bool().numpy())
+    
+mask_all = np.array(mask_all)
 
-with open('all_fc_vals.pkl', 'wb') as f:
-    pickle.dump(all_fc_vals, f)
+
+mask_all = np.sum(mask_all, axis=0)
+
+mask_all = np.where(mask_all == num_classes)[0]
+
+print('Comnmon Masked Indices: ', mask_all.shape)
+
+means = []
+
+for j in range(0,num_classes):
+    fc_vals = all_fc_vals[j]
+    mean = np.mean(fc_vals, axis=0)
+    means.append(mean)
     
-# Load all_fc_vals from file
-with open('all_fc_vals.pkl', 'rb') as f:
-    all_fc_vals = pickle.load(f)
+    
+means = np.array(means)
+def calculate_rankings(means):
+    n = len(means)
+    rankings = []
+    
+    # Calculate score for each class j
+    for j in range(n):
+        # Sum of absolute differences with all other classes
+        score = sum(abs(means[j] - means[k]) for k in range(n) if k != j)
+        rankings.append(score)
+        
+    return rankings
+
+#############################
+        
+        
+means = calculate_rankings(means)
+
+means = np.array(means)
+
+means = torch.tensor(means)
+
+    
+
 
 # from plot_correlation import create_correlation_plots
 
 # create_correlation_plots(all_fc_vals, num_classes)
+
+
+# print percentage of common zeros for each class
+
 for i in range(1, 21):
     per = 0.05 * i
     print(f"\nAnalysis for Percentage: {per:.2f}")
@@ -266,24 +428,50 @@ probe.to('cpu')
 probe_weights = list(probe.parameters())[0]
 # tokenized_dataset1 = tokenized_dataset['test']#.shuffle().select(range(200))
 # recording_dataset = tokenized_dataset['train']#.shuffle().select(range(200))
+all_tables = []
+per = 0.1
+# for k in range(1, 11):
+    
+    
+results_table = PrettyTable()
+if(compliment):
+    results_table.field_names = results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "STD Accuracy", "STD Confidence", "STD compliment ACC", "STD compliment Conf", "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf", "Total Masked", "Intersection"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
+
+class_labels = []
+# base_accuracies = []
+# base_confidences = []
+# base_comp_acc = []
+# base_comp_conf = []
+std_masked_counts = []
+std_accuracies = []
+std_confidences = []
+std_comp_acc = []
+std_comp_conf = []
+max_masked_counts = []
+max_accuracies = []
+max_confidences = []
+max_comp_acc = []
+max_comp_conf = []
+diff_from_max = []
+total_masked = []
+    
+
+# per = 0.1 * k
+per = 0.5
 for j in range(0,num_classes):
     fc_vals = all_fc_vals[j]
     model = reset_gpt(model)
+    model = mask_gpt2(model, torch.ones(768).to('cuda'))
     dataset = tokenized_dataset1.filter(lambda x: x[lab] in [j])
     dataset_recording = recording_dataset.filter(lambda x: x[lab] in [j])
     dataset_complement = tokenized_dataset1.filter(lambda x: x[lab] not in [j])
     
 
     class_labels.append(f"Class {j}")
-    acc = evaluate_gpt2_classification(lab, model, dataset, tokenizer)
-    print("Class ",j, "base accuracy: ", acc[0], acc[1])
-    base_accuracies.append(acc[0])
-    base_confidences.append(acc[1])
+    # acc = evaluate_gpt2_classification(lab, model, dataset, tokenizer)
+    print("Class ",j, "base accuracy: ", base_accuracies[j], base_confidences[j])
     if(compliment):
-        acc = evaluate_gpt2_classification(lab, model, dataset_complement, tokenizer)
-        print("Class ",j, "complement base accuracy: ", acc[0], acc[1])
-        base_comp_acc.append(acc[0])
-        base_comp_conf.append(acc[1])
+        print("Class ",j, "complement base accuracy: ", base_comp_acc[j], base_comp_conf[j])
         
     # print("Recording activations...")
     # fc_vals = evaluate_gpt2_classi
@@ -293,49 +481,64 @@ for j in range(0,num_classes):
     # mask_std = mask_max_low_std
     print("Masking Probe...")
     # model = mask_distillbert(model,mask_std)
- 
+
     
     # diff_from_max.append(int((torch.logical_or(mask_std, mask_max) == 0).sum().item()))
     
     intersection_zeros = (~mask_std.bool()) & (~mask_max.bool())
     pe = 0.3
-    while intersection_zeros.sum().item() < 0.3*mask_std.shape[0]:
-        mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off, random_mask = compute_masks(fc_vals,pe)
-        intersection_zeros = (~mask_std.bool()) & (~mask_max.bool())
-        pe += 0.01
+    # while intersection_zeros.sum().item() < 0.3*mask_std.shape[0]:
+    #     mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off, random_mask = compute_masks(fc_vals,pe)
+    #     intersection_zeros = (~mask_std.bool()) & (~mask_max.bool())
+    #     pe += 0.01
         
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off, random_mask = compute_masks(fc_vals,per)
     
-    mask_std[~intersection_zeros] = 1
+    # intersection vs non intersection max and high mad
     
-    fc_vals2 = torch.tensor(fc_vals)
+    # mask_std[~intersection_zeros] = 1
     
-    num_common_zeros = intersection_zeros.sum().item()
+    # fc_vals2 = torch.tensor(fc_vals)
     
-    mean = torch.mean(fc_vals2, axis=0)
+    # num_common_zeros = intersection_zeros.sum().item()
     
-    intersection_indices = torch.where(intersection_zeros)
+    # mean = torch.mean(fc_vals2, axis=0)
     
-    mean[intersection_indices] = -torch.inf
+    # intersection_indices = torch.where(intersection_zeros)
     
-    mask_max_indices = torch.argsort(mean, descending=True)[:num_common_zeros]
+    # mean[intersection_indices] = -torch.inf
     
-    # mask_max_indices = [idx for idx in mask_max_indices if idx not in intersection_indices][:num_common_zeros]
+    # mask_max_indices = torch.argsort(mean, descending=True)[:num_common_zeros]
     
-    mask_max = torch.ones_like(mask_max)
+    # # mask_max_indices = [idx for idx in mask_max_indices if idx not in intersection_indices][:num_common_zeros]
     
-    mask_max[mask_max_indices] = 0.0
+    
+    
+    # probless
+    mask_std = torch.ones_like(mask_max)
+    
+    indices = torch.argsort(means[j], descending=True)[:int(0.3*len(means[j]))]
+    
+    mask_std[indices] = 0.0
+    
+    
+    
+    
+    
     
     print("Number of common zeros: ", num_common_zeros)
     
     diff_from_max.append(num_common_zeros)
     
+    all_fc_vals_pass = all_fc_vals.copy()
+    # all_fc_vals_pass.pop(j)
     
     
     
     
-    tao = torch.inf#2.5
-    model = mask_range_gpt(model, mask_std, fc_vals, tao)        
-    t = int(mask_std.shape[0]-torch.count_nonzero(mask_std))
+    tao = 2.5
+    model = mask_range_gpt(model, mask_max, fc_vals, tao, all_fc_vals_pass)        
+    t = int(mask_std.shape[0]-torch.count_nonzero(mask_max))
     print("Total Masked :", t)
     total_masked.append(t)
     
@@ -350,10 +553,15 @@ for j in range(0,num_classes):
         std_comp_acc.append(acc[0])
         std_comp_conf.append(acc[1])
     model = reset_gpt(model)
-    tao = torch.inf
+
     print("Masking MAX...")
+    tao = torch.inf
+    
     # model = mask_distillbert(model,mask_max) 
-    model = mask_range_gpt(model, mask_max, fc_vals, tao)
+    # model = mask_range_gpt(model, mask_max, fc_vals, tao, all_fc_vals_pass)
+    
+    # model = mask_gpt2(model, mask_max)
+    model = mask_range_gpt(model, mask_max, fc_vals, tao, all_fc_vals_pass)    
     t = int(mask_max.shape[0]-torch.count_nonzero(mask_max))
     print("Total Masked :", t)
     acc = evaluate_gpt2_classification(lab, model, dataset, tokenizer)
@@ -384,15 +592,19 @@ for j in range(0,num_classes):
         ])            
 # print("Layer ", mask_layer)
 print(results_table)
-tables.append(results_table)
-# print("Layer ", mask_layer)
-print("Average Base Accuracy: ",round(sum(base_accuracies)/len(base_accuracies), 4))
-print("Average Base Confidence: ", round(sum(base_confidences)/len(base_confidences), 4))
-print("Average MAX Accuracy: ", round(sum(max_accuracies)/len(max_accuracies), 4))
-print("Average MAX Confidence: ", round(sum(max_confidences)/len(max_confidences), 4))
-print("Average MAX Complement Accuracy: ", round(sum(max_comp_acc)/len(max_comp_acc), 4))
-print("Average MAX Complement Confidence: ", round(sum(max_comp_conf)/len(max_comp_conf), 4))
+#     tables.append(results_table)
+#     # print("Layer ", mask_layer)
+#     print("Average Base Accuracy: ",round(sum(base_accuracies)/len(base_accuracies), 4))
+#     print("Average Base Confidence: ", round(sum(base_confidences)/len(base_confidences), 4))
+#     print("Average MAX Accuracy: ", round(sum(max_accuracies)/len(max_accuracies), 4))
+#     print("Average MAX Confidence: ", round(sum(max_confidences)/len(max_confidences), 4))
+#     print("Average MAX Complement Accuracy: ", round(sum(max_comp_acc)/len(max_comp_acc), 4))
+#     print("Average MAX Complement Confidence: ", round(sum(max_comp_conf)/len(max_comp_conf), 4))
 
+# per = 0.1
 # for table in tables:
-# print(table)
-# print("\n")
+    
+#     print(f"\nAnalysis for Percentage: {per:.2f}")
+#     print(table)
+#     print("\n")
+#     per += 0.1

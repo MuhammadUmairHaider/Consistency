@@ -402,10 +402,10 @@ def compute_max_random_off(mean_vals, percent):
     # Compute mask
     return compute_max_mask(mean_vals_filtered, percent)
 
-def mask_range_distilbert(tao,model, mask, fc_vals, fc_vals2):
+def mask_range_distilbert(tao,model, mask, fc_vals):
     
     mean = torch.tensor(np.mean(fc_vals, axis=0))
-    mean2 = torch.tensor(np.mean(fc_vals2, axis=0))
+    # mean2 = torch.tensor(np.mean(fc_vals2, axis=0))
     std = torch.tensor(np.std(fc_vals, axis=0))
     mask = mask.to(torch.bool)
     lower_bound = torch.full_like(mean, torch.inf)
@@ -415,7 +415,7 @@ def mask_range_distilbert(tao,model, mask, fc_vals, fc_vals2):
     
     model.distilbert.transformer.mask_layer.lower_bound = lower_bound.to(device)
     model.distilbert.transformer.mask_layer.upper_bound = upper_bound.to(device)
-    model.distilbert.transformer.mask_layer.replacement_values = mean2.to(device)
+    # model.distilbert.transformer.mask_layer.replacement_values = mean2.to(device)
     
     return model
 
@@ -457,6 +457,10 @@ def mask_distillbert(model, mask):
 
 def mask_bert(model, mask):
     model.bert.encoder.masking_layer = mask.to(device)
+    return model
+
+def mask_gpt2(model, mask):
+    model.transformer.mask_m_layer = mask.to(device)
     return model
 
 def pad(batch):
@@ -648,7 +652,7 @@ def manual_generate_v2(model, input_ids, attention_mask):
         return next_tokens, confidences, fc1_vals[0]
         
 
-def evaluate_gpt2_classification(lab ,model, eval_dataset, tokenizer, batch_size=32):
+def evaluate_gpt2_classification(lab ,model, eval_dataset, tokenizer, batch_size=128):
     
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -753,7 +757,15 @@ def evaluate_gpt2_classification_batch(model, eval_dataset, tokenizer, batch_siz
     
     return round(accuracy,4), round(confidence,4), all_hidden, report, all_labels, all_predictions 
 
-def mask_range_gpt(model, mask, fc_vals, tao):
+def mask_range_gpt(model, mask, fc_vals, tao, all_fc_vals):
+    
+    all_fc_vals = np.concatenate(all_fc_vals)
+    
+    # all_fc_vals = torch.cat(all_fc_vals, dim=1)
+
+    mean_comp = torch.tensor(np.mean(all_fc_vals, axis=0))
+    
+    
     mean = torch.tensor(np.mean(fc_vals, axis=0))
     std = torch.tensor(np.std(fc_vals, axis=0))
     mask = mask.to(torch.bool)
@@ -765,7 +777,7 @@ def mask_range_gpt(model, mask, fc_vals, tao):
     
     model.transformer.mask_layer.lower_bound = lower_bound.to(device)
     model.transformer.mask_layer.upper_bound = upper_bound.to(device)
-    
+    # model.transformer.mask_layer.replacement_values = mean_comp.to(device)
     return model
 
 def reset_gpt(model):
@@ -885,11 +897,165 @@ import torch
 #     return round(correct/i,4), round(confidence/i,4), fc_vals
 
 
+#SST2
+# def evaluate_llma_classification(model, eval_dataset, tokenizer):
 
+#     # Create label mapping
+#     label_mapping = label_mapping = {0: 'negative', 1: 'positive'}
+
+
+
+#     # Configure progress bar for the combined dataset
+#     progress_bar = tqdm(eval_dataset, desc="Processing examples")
+
+#     i = 0
+#     correct = 0
+#     confidence = 0
+#     fc_vals = []
+#     model.to('cuda')
+#     model.eval()
+
+#     for example in progress_bar:
+#         prompt = '''Choose from one of these sentiments: negative, positive. These are your only choises. Be careful distinguishing between similar sentiments. These are real reviews.
+# {{badly-rendered cgi effects :negative}}
+# {{it feels more like the pilot episode of a tv series than a feature film :negative}}
+# {{if you liked the previous movies in the series :positive}}
+# {{required to balance all the formulaic equations in the long-winded heist comedy who is cletis tout ? :negative}}
+# {{a load of clams left in the broiling sun for a good three days :negative}}
+# {{if you liked the previous movies in the series , you 'll have a good time with this one too :positive}}
+# {{it 's a long way from orwell 's dark , intelligent warning cry ( 1984 ) to the empty stud knockabout of equilibrium , and what once was conviction is now affectation :positive}}
+# {{a smoother , more focused :positive}}
+# {{the genuinely funny jokes are few and far between :negative}}
+# {{have stayed there :positive}}
+# {{"{}":"'''.format(example['text'])
+        
+#         input_ids = tokenizer([prompt, prompt], return_tensors='pt')
+        
+#         # Generate output
+#         output = manual_generate_llma(
+#             model, 
+#             input_ids['input_ids'].to('cuda'), 
+#             input_ids['attention_mask'].to('cuda'), 
+#             input_ids['input_ids'].shape[1]+8
+#         )
+        
+#             # Get predicted label
+#         predicted_label = tokenizer.decode(
+#             output[0][0][input_ids['input_ids'].shape[1]:]
+#         ).split('}')[0]
+        
+#         predicted_label = predicted_label.strip('"')
+        
+#         # Get true label text using the mapping
+#         true_label_text = label_mapping[example['label']]
+        
+#         i += 1
+#         if true_label_text == predicted_label:
+#             correct += 1
+            
+#         # else:
+#         #     print(f"Text: {example['text']}, True label: {true_label_text}, Predicted label: {predicted_label}")
+        
+#         label_tok = tokenizer.encode(true_label_text)[1]
+        
+#         # Update progress bar description with current accuracy
+#         progress_bar.set_description(f"Accuracy: {round(correct/i,3)*100}%")
+#         confidence += output[1][0][0][label_tok].item()
+#         fc_vals.append(output[2][0][0].squeeze())
+        
+        
+
+#     return round(correct/i,4), round(confidence/i,4), fc_vals
+
+
+#IMDB
+
+# def evaluate_llma_classification(model, eval_dataset, tokenizer):
+
+#     # Create label mapping
+#     label_mapping = label_mapping = {0: 'neg', 1: 'pos'}
+
+
+
+#     # Configure progress bar for the combined dataset
+#     progress_bar = tqdm(eval_dataset, desc="Processing examples")
+
+#     i = 0
+#     correct = 0
+#     confidence = 0
+#     fc_vals = []
+#     model.to('cuda')
+#     model.eval()
+
+#     for example in progress_bar:
+#         prompt = '''Choose from one of these categories: neg, pos. Be careful distinguishing between similar categories.
+# {{The only reason I DVRd this movie was because 1. I live in Cleveland and Shaq plays basketball for us now and 2. I've always heard how awful it was. The movie did not disappoint. The best parts were Shaq's outfits. The worst parts were, well, just about everything else. My 12 year old son and I just squirmed and couldn't look at the screen when Shaq started rapping and we kept wondering why Max didn't wish for Kazzam to fix that front tooth of his! But for all it's terribleness we just couldn't stop watching it, the story sucked you in, like a black hole or quicksand or a tar pit, it was hypnotic. But it was worth it for the laughs and just to say that we actually watched "Kazzam".:neg}}
+# {{Timberlake's performance almost made attack the screen. It wasn't all bad, I just think the reporters role was wrong for him.<br /><br />LL Cool J played the typical rapper role, toughest,baddest guy around. I don't think the cracked a smile in the whole movie, not even when proposed to his girlfriend.<br /><br />Morgan Freeman pretty much carried the whole movie. He was has some funny scenes which are the high point of the movie.<br /><br />Kevin Spacey wasn't good or bad he was just "there".<br /><br />Overall it's a Dull movie. bad plot. a lot of bad acting or wrong roles for actors.:neg}}
+# {{'Deliverance' is a brilliant condensed epic of a group of thoroughly modern men who embark on a canoe trip to briefly commune with nature, and instead have to fight for their sanity, their lives, and perhaps even their souls. The film has aged well. Despite being made in the early Seventies, it certainly doesn't look particularly dated. It still possesses a visceral punch and iconic status as a dramatic post-'Death of the Sixties' philosophical-and-cultural shock vehicle. There are very few films with similar conceits that can compare favourably to it, although the legendary Sam Peckinpah's stuff would have to be up there. Yes, there has been considerable debate and discussion about the film's most confronting scene (which I won't expand upon here) - and undoubtedly one of the most confronting scenes in the entire history of the cinematic medium - but what surprises about this film is how achingly beautiful it is at times. This seems to be generally overlooked (yet in retrospect quite understandably so). The cinematography that captures the essence of the vanishing, fragile river wilderness is often absolutely stunning, and it counterbalances the film as, in a moment of brief madness, we the viewers - along with the characters themselves - are plunged into unrelenting nightmare. 'Deliverance's narrative is fittingly lean and sinewy, and it is surprising how quickly events unfold from point of establishment, through to crisis, and aftermath. It all takes place very quickly, which lends a sense of very real urgency to the film. The setting is established effectively through the opening credits. The characters are all well-drawn despite limited time spent on back story. We know just enough about them to know them for the kind of man they are, like them and ultimately fear for them when all goes to hell. The conflict and violence within the movie seems to erupt out of nowhere, with a frightening lack of logic. This is author James Dickey's theme - that any prevailing romanticism about the nature of Man's perceived inherent 'goodness' can only wilt and die when his barely suppressed animal instincts come to the fore. There are no demons or bogeymen here. The predatory hillbillies - as the film's central villains - are merely crude, terrifyingly amoral cousins of our protagonists. They shock because their evil is petty and tangible. The film has no peripheral characters. All reflect something about the weaknesses and uncertainties of urbanised Homo Sapiens in the latter 20th century, and all are very real and recognisable. Burt Reynolds is wonderful in this movie as the gung-ho and almost fatally over-confident Survivalist, Lewis, and it is a shame to think that he really couldn't recapture his brief moment of dramatic glory throughout the rest of his still sputtering up-and-down career ('Boogie Nights' excluded, perhaps). Trust me, if your are not a Reynolds fan, you WILL be impressed with his performance here. John Voight is his usual effortlessly accomplished self, and Ned Beatty and Ronny Cox both make significant contributions. This is simply a great quartet of actors. To conclude, I must speculate as to if and when 'Deliverance' author James Dickey's 'To the White Sea' will be made. For those that enjoyed (?) this film, TTWS is a similarly harrowing tale of an American Air Force pilot's struggle for survival after being shot down over the Japanese mainland during WW2. It's more of the typically bleak existentialism and primordial savagery that is Dickey's trademark, but it has all the makings of a truly spectacular, poetic cinematic experience. There was the suggestion a few years ago that the Coen brothers might be producing it, but that eventually came to nothing. Being an avid Coen-o-phile it disappoints me to think what might have been had they gotten the green light on TTWS, rather than their last couple of relatively undistinguished efforts. Returning to 'Deliverance', it's impossible to imagine a movie of such honest, unnerving brutality being made in these times, and that is pretty shameful. We, the cinema-going public, are all the poorer for this.:pos}}
+# {{"{}":'''.format(example['text'])
+        
+#         input_ids = tokenizer([prompt, prompt], return_tensors='pt')
+        
+#         # Generate output
+#         output = manual_generate_llma(
+#             model, 
+#             input_ids['input_ids'].to('cuda'), 
+#             input_ids['attention_mask'].to('cuda'), 
+#             input_ids['input_ids'].shape[1]+4
+#         )
+        
+#             # Get predicted label
+            
+#         st = output[0][0][input_ids['input_ids'].shape[1]:]
+#         predicted_label = tokenizer.decode(st).split('}')[0]
+#         try:
+#             tok_lab = tokenizer.encode(predicted_label)[1]
+            
+#         except:
+#             print(st)
+#             print(predicted_label)
+#             # print(tokenizer.encode(predicted_label))
+        
+#         # Get predicted label position in st
+#         label_positions = []
+#         for j in range(len(st)):
+#             if st[j] == tok_lab:
+#                 label_positions.append(j)
+#                 break
+        
+        
+        
+#         predicted_label = predicted_label.strip('"')
+        
+#         # Get true label text using the mapping
+#         true_label_text = label_mapping[example['label']]
+        
+#         i += 1
+#         if true_label_text == predicted_label:
+#             correct += 1
+#             fc_vals.append(output[2][0][label_positions[0]].squeeze())
+            
+#         # else:
+#         #     print(f"Text: {example['text']}, True label: {true_label_text}, Predicted label: {predicted_label}")
+        
+#         label_tok = tokenizer.encode(true_label_text)[1]
+        
+#         # Update progress bar description with current accuracy
+#         progress_bar.set_description(f"Accuracy: {round(correct/i,3)*100}%")
+#         confidence += output[1][0][0][label_tok].item()
+        
+        
+        
+
+#     return round(correct/i,4), round(confidence/i,4), fc_vals
+
+
+from tqdm.auto import tqdm
+import torch
 def evaluate_llma_classification(model, eval_dataset, tokenizer):
 
     # Create label mapping
-    label_mapping = label_mapping = {0: 'negative', 1: 'positive'}
+    label_mapping = {0: 'Company', 1: 'EducationalInstitution', 2: 'Artist', 3: 'Athlete', 4: 'OfficeHolder', 5: 'MeanOfTransportation', 6: 'Building', 7: 'NaturalPlace', 8: 'Village', 9: 'Animal', 10: 'Plant', 11: 'Album', 12: 'Film', 13: 'WrittenWork'}
 
 
 
@@ -904,18 +1070,17 @@ def evaluate_llma_classification(model, eval_dataset, tokenizer):
     model.eval()
 
     for example in progress_bar:
-        prompt = '''Choose from one of these sentiments: negative, positive. These are your only choises. Be careful distinguishing between similar sentiments. These are real reviews.
-{{badly-rendered cgi effects :negative}}
-{{it feels more like the pilot episode of a tv series than a feature film :negative}}
-{{if you liked the previous movies in the series :positive}}
-{{required to balance all the formulaic equations in the long-winded heist comedy who is cletis tout ? :negative}}
-{{a load of clams left in the broiling sun for a good three days :negative}}
-{{if you liked the previous movies in the series , you 'll have a good time with this one too :positive}}
-{{it 's a long way from orwell 's dark , intelligent warning cry ( 1984 ) to the empty stud knockabout of equilibrium , and what once was conviction is now affectation :positive}}
-{{a smoother , more focused :positive}}
-{{the genuinely funny jokes are few and far between :negative}}
-{{have stayed there :positive}}
-{{"{}":"'''.format(example['text'])
+        prompt = '''Choose from one of these categories: Company, EducationalInstitution, Artist, Athlete, OfficeHolder, MeanOfTransportation, Building, NaturalPlace, Village, Animal, Plant, Album, Film, WrittenWork. Be careful distinguishing between similar categories.
+
+{{ Abbott of Farnham E D Abbott Limited was a British coachbuilding business based in Farnham Surrey trading under that name from 1929. A major part of their output was under sub-contract to motor vehicle manufacturers. Their business closed in 1972.:Company}}
+
+{{ Dubai Gem Private School (DGPS) is a British school located in the Oud Metha area of Dubai United Arab Emirates. Dubai Gem Nursery is located in Jumeirah. Together the institutions enroll almost 1500 students aged 3 to 18.:EducationalInstitution}}
+
+{{ Martin Marty McKinnon (born 5 July 1975 in Adelaide) is a former Australian rules footballer who played with Adelaide Geelong and the Brisbane Lions in the Australian Football League (AFL).McKinnon was recruited by Adelaide in the 1992 AFL Draft with their first ever national draft pick. He was the youngest player on Adelaide's list at the time and played for Central District in the SANFL when not appearing with Adelaide.:Athlete}}
+
+{{ The Wedell-Williams XP-34 was a fighter aircraft design submitted to the United States Army Air Corps (USAAC) before World War II by Marguerite Clark Williams widow of millionaire Harry P. Williams former owner and co-founder of the Wedell-Williams Air Service Corporation.:MeanOfTransportation}}
+
+{{"{}":'''.format(example['text'])
         
         input_ids = tokenizer([prompt, prompt], return_tensors='pt')
         
@@ -940,6 +1105,7 @@ def evaluate_llma_classification(model, eval_dataset, tokenizer):
         i += 1
         if true_label_text == predicted_label:
             correct += 1
+            fc_vals.append(output[2][0][0].squeeze())
             
         # else:
         #     print(f"Text: {example['text']}, True label: {true_label_text}, Predicted label: {predicted_label}")
@@ -949,7 +1115,7 @@ def evaluate_llma_classification(model, eval_dataset, tokenizer):
         # Update progress bar description with current accuracy
         progress_bar.set_description(f"Accuracy: {round(correct/i,3)*100}%")
         confidence += output[1][0][0][label_tok].item()
-        fc_vals.append(output[2][0][0].squeeze())
+        
         
         
 

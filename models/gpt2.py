@@ -934,6 +934,8 @@ class GPT2Model(GPT2PreTrainedModel):
         self._attn_implementation = config._attn_implementation
         self.m_layer = config.m_layer
         self.mask_layer = MaskLayer(torch.tensor(float('inf')), torch.tensor(float('-inf')), torch.tensor(0.0))
+        
+        self.mask_m_layer = torch.ones((768), dtype=torch.float32).to('cuda')
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1166,6 +1168,7 @@ class GPT2Model(GPT2PreTrainedModel):
                 )
             if(i == self.m_layer):
                 hidden_states = self.mask_layer(outputs[0])
+                hidden_states = hidden_states * self.mask_m_layer
             else:
                 hidden_states = outputs[0]
                 

@@ -9,16 +9,16 @@ from huggingface_hub import login
 login("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")
 
 # Load the dataset from disk
-correct_dataset = load_dataset("json", data_files="correct_predictions_SST2.json")
+correct_dataset = load_dataset("json", data_files="correct_predictions_DB_14.json")
 
 # correct_dataset = load_dataset("fancyzhx/ag_news")
 
 correct_dataset = correct_dataset["train"]
-num_classes = 2
+num_classes = 14
 
 tao = 2.5
 
-percent = 0.1
+percent = 0.3
 # tao = torch.inf
 
 
@@ -160,7 +160,7 @@ for j in range(0,num_classes):
     fc_vals = fc_vals[2]
 
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off = compute_masks(fc_vals,percent)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off, mask_random = compute_masks(fc_vals,percent)
     tao = 2.5
     mask_std = mask_max_low_std
     print("Masking Range...")

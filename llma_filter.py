@@ -112,7 +112,11 @@ class_counts = {0: 0, 1: 0}
 
 for example in progress_bar:
     
-    example[text_tag] = example[text_tag][:400]
+    # example[text_tag] = '*'*400
+    # only for IMDB
+    example[text_tag] = example[text_tag][:350]
+    
+    # Create prompt
     prompt = '''Choose from one of these categories: neg, pos. Be careful distinguishing between similar categories.
 {{The only reason I DVRd this movie was because 1. I live in Cleveland and Shaq plays basketball for us now and 2. I've always heard how awful it was. The movie did not disappoint. The best parts were Shaq's outfits. The worst parts were, well, just about everything else. My 12 year old son and I just squirmed and couldn't look at the screen when Shaq started rapping and we kept wondering why Max didn't wish for Kazzam to fix that front tooth of his! But for all it's terribleness we just couldn't stop watching it, the story sucked you in, like a black hole or quicksand or a tar pit, it was hypnotic. But it was worth it for the laughs and just to say that we actually watched "Kazzam".:neg}}
 {{Timberlake's performance almost made attack the screen. It wasn't all bad, I just think the reporters role was wrong for him.<br /><br />LL Cool J played the typical rapper role, toughest,baddest guy around. I don't think the cracked a smile in the whole movie, not even when proposed to his girlfriend.<br /><br />Morgan Freeman pretty much carried the whole movie. He was has some funny scenes which are the high point of the movie.<br /><br />Kevin Spacey wasn't good or bad he was just "there".<br /><br />Overall it's a Dull movie. bad plot. a lot of bad acting or wrong roles for actors.:neg}}
