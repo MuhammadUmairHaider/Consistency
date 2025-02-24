@@ -1023,19 +1023,39 @@ class MaskLayer(nn.Module):
             # Process on GPU using KDE layers
             x_flat = x.reshape(-1, feature_dim)
             
-            # Calculate probabilities for all features
-            all_probs = torch.zeros(x_flat.shape[0], feature_dim, 
+            # Calculate p(x|j) for current class j
+            p_x_given_j = torch.zeros(x_flat.shape[0], feature_dim, 
                                   device=x.device, dtype=torch.float32)
             
-            # Process features using GPU KDE layers
+            # Process features using GPU KDE layers for current class
             for i, kde_layer in enumerate(self.kde_layers):
-                all_probs[:, i] = kde_layer(x_flat[:, i])
+                p_x_given_j[:, i] = kde_layer(x_flat[:, i])
             
-            # Reshape probabilities back to original shape
-            all_probs = all_probs.reshape(batch_size, seq_len, feature_dim)
+            # Calculate sum of p(x|i) across all classes i
+            sum_p_x_given_i = torch.zeros_like(p_x_given_j)
             
-            # Create mask
-            mask = (all_probs >= self.prob_threshold)
+            # For each class i
+            for class_idx in self.kde_models_by_class.keys():
+                # Get KDE layers for this class
+                class_kde_layers = self.kde_layers_by_class[str(class_idx)]
+                
+                # Calculate probabilities for this class
+                p_x_given_i = torch.zeros_like(p_x_given_j)
+                for i, kde_layer in enumerate(class_kde_layers):
+                    p_x_given_i[:, i] = kde_layer(x_flat[:, i])
+                
+                # Add to sum of p(x|i)
+                sum_p_x_given_i += p_x_given_i
+            
+            # Calculate p(x|j) / sum(p(x|i))
+            epsilon = 1e-10  # To avoid division by zero
+            normalized_probs = p_x_given_j / (sum_p_x_given_i + epsilon)
+            
+            # Reshape normalized probabilities back to original shape
+            normalized_probs = normalized_probs.reshape(batch_size, seq_len, feature_dim)
+            
+            # Create mask based on normalized probabilities
+            mask = (normalized_probs >= self.prob_threshold)
             
             # Apply mask using replacement values
             replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
@@ -1053,6 +1073,175 @@ class MaskLayer(nn.Module):
     def set_probability_threshold(self, threshold):
         """Update probability threshold"""
         self.prob_threshold = threshold
+        
+        
+#vectorized form
+
+# import torch
+# import torch.nn as nn
+# import numpy as np
+# import math
+
+# class MultiFeatureKDELayer(nn.Module):
+#     def __init__(self, samples, bandwidth=None):
+#         """
+#         Vectorized KDE layer that handles multiple features at once
+        
+#         Args:
+#             samples: Tensor or numpy array of shape [num_examples, num_features]
+#             bandwidth: Optional, can be a scalar or a tensor of shape [num_features]
+#         """
+#         super().__init__()
+        
+#         if isinstance(samples, np.ndarray):
+#             samples = torch.from_numpy(samples)
+#         elif isinstance(samples, torch.Tensor):
+#             samples = samples.detach()
+            
+#         # Register samples as buffer - shape: [num_examples, num_features]
+#         self.register_buffer('samples', samples.float())
+        
+#         # Compute or set bandwidth - can be per feature
+#         if bandwidth is None:
+#             # Scott's rule per feature
+#             n = samples.shape[0]
+#             bandwidth = n**(-1/5) * torch.std(samples, dim=0)
+        
+#         # Handle scalar bandwidth
+#         if not isinstance(bandwidth, torch.Tensor):
+#             bandwidth = torch.tensor([bandwidth]).float()
+            
+#         # Expand to match feature dimension if needed
+#         if bandwidth.numel() == 1 and samples.shape[1] > 1:
+#             bandwidth = bandwidth.expand(samples.shape[1])
+            
+#         self.register_buffer('bandwidth', bandwidth.float())
+
+#     def forward(self, x):
+#         """
+#         Compute KDE for multiple features simultaneously
+        
+#         Args:
+#             x: Input tensor of shape [batch_size, num_features]
+            
+#         Returns:
+#             Tensor of shape [batch_size, num_features] containing KDE values
+#         """
+#         # Get dimensions
+#         batch_size = x.shape[0]
+#         num_examples = self.samples.shape[0]
+        
+#         # Prepare for broadcasting
+#         # [batch_size, 1, num_features]
+#         x_expanded = x.unsqueeze(1)
+#         # [1, num_examples, num_features]  
+#         samples_expanded = self.samples.unsqueeze(0)
+#         # [1, 1, num_features]
+#         bandwidth_expanded = self.bandwidth.unsqueeze(0).unsqueeze(0)
+        
+#         # Calculate squared distances - shape: [batch_size, num_examples, num_features]
+#         squared_dist = (x_expanded - samples_expanded)**2
+        
+#         # Apply kernel - shape: [batch_size, num_examples, num_features]
+#         kernel = torch.exp(-squared_dist / (2 * bandwidth_expanded**2))
+        
+#         # Mean across examples dimension - shape: [batch_size, num_features]
+#         kde = kernel.mean(dim=1)
+        
+#         # Normalize with proper scaling factor - shape: [batch_size, num_features]
+#         normalization = 1.0 / (self.bandwidth * math.sqrt(2 * math.pi))
+#         return kde * normalization
+
+# class MaskLayer(nn.Module):
+#     def __init__(self, lower_bound, upper_bound, replacement_values):
+#         super(MaskLayer, self).__init__()
+#         self.lower_bound = lower_bound
+#         self.upper_bound = upper_bound
+#         self.replacement_values = replacement_values
+        
+#         # Initialize KDE related attributes
+#         self.kde_layers_by_class = nn.ModuleDict()  # Store GPU KDE layers
+#         self.prob_threshold = None
+#         self.use_probability = False
+#         self.current_class = None
+
+#     def fit_kde(self, activation_lists, threshold=0.3):
+#         """
+#         Set up vectorized KDE models for probability-based masking for each class
+        
+#         Args:
+#             activation_lists: List of tensors, shape [num_classes][num_examples, num_features]
+#             threshold: Probability threshold for masking
+#         """
+#         num_classes = len(activation_lists)
+        
+#         # Fit KDE for each class separately
+#         for class_idx in range(num_classes):
+#             class_data = activation_lists[class_idx]
+#             if isinstance(class_data, np.ndarray):
+#                 class_data = torch.from_numpy(class_data).float()
+#             elif isinstance(class_data, torch.Tensor):
+#                 class_data = class_data.detach().float()
+            
+#             # Create one KDE layer per class for all features at once
+#             kde_layer = MultiFeatureKDELayer(class_data)
+#             self.kde_layers_by_class[str(class_idx)] = kde_layer
+        
+#         self.prob_threshold = threshold
+#         self.use_probability = True
+
+#     def set_class(self, class_idx):
+#         """Set which class's KDE to use for masking"""
+#         if str(class_idx) not in self.kde_layers_by_class:
+#             raise ValueError(f"No KDE models fitted for class {class_idx}")
+#         self.current_class = class_idx
+
+#     def forward(self, x):
+#         if not self.use_probability:
+#             # Original bounds-based masking
+#             lower_bound = self.lower_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             upper_bound = self.upper_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             mask = (x >= lower_bound) & (x <= upper_bound)
+#             x = torch.where(mask, replacement_values, x)
+#             return x
+#         else:
+#             if self.current_class is None:
+#                 raise ValueError("Must call set_class before using probability-based masking")
+
+#             batch_size, seq_len, feature_dim = x.shape
+            
+#             # Process on GPU using vectorized KDE layer
+#             x_flat = x.reshape(-1, feature_dim)
+            
+#             # Get KDE layer for current class
+#             kde_layer = self.kde_layers_by_class[str(self.current_class)]
+            
+#             # Calculate probabilities for all features at once
+#             all_probs = kde_layer(x_flat)
+            
+#             # Reshape probabilities back to original shape
+#             all_probs = all_probs.reshape(batch_size, seq_len, feature_dim)
+            
+#             # Create mask
+#             mask = (all_probs >= self.prob_threshold)
+            
+#             # Apply mask using replacement values
+#             replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             x = torch.where(mask, replacement_values, x)
+            
+#             return x
+            
+#     def set_perms(self, lower_bound, upper_bound, replacement_values):
+#         """Set parameters and switch to bounds-based masking"""
+#         self.lower_bound = lower_bound
+#         self.upper_bound = upper_bound
+#         self.replacement_values = replacement_values
+#         self.use_probability = False
+        
+#     def set_probability_threshold(self, threshold):
+#         """Update probability threshold"""
+#         self.prob_threshold = threshold
 
 @add_start_docstrings(
     "The bare GPT2 Model transformer outputting raw hidden-states without any specific head on top.",
