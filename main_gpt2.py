@@ -8,9 +8,9 @@ from utilities import evaluate_gpt2_classification as evaluate_gpt2_classificati
 import torch  
 from tqdm import tqdm
 
-dataset_name = "stanfordnlp/sst2"
+dataset_name = "fancyzhx/ag_news"
 
-text_tag = "sentence"
+text_tag = "text"
 
 # Load dataset and tokenizer
 
@@ -20,7 +20,7 @@ layer = 11
 # for i in tqdm(range(1, 21)):
 per = 0.3
 print("Percentage: ", per)
-num_classes = 2
+num_classes = 4
 
 # tao = 2.5
 
@@ -118,7 +118,7 @@ def sample_balanced_dataset(dataset_dict, max_train_per_class=800, max_test_per_
     
     return sampled_dataset
 
-dataset = sample_balanced_dataset(dataset, max_train_per_class=800, max_test_per_class=200)
+# dataset = sample_balanced_dataset(dataset, max_train_per_class=800, max_test_per_class=200)
 
 ###########################################
 
@@ -329,7 +329,7 @@ for j in range(0,num_classes):
 #Probless
 mask_all = []
 for fc_vals in all_fc_vals:
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off, mask_random = compute_masks(fc_vals, 0.3)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off, mask_random, mask_kst = compute_masks(fc_vals, 0.3)
     
     mask_all.append(~mask_max.bool().numpy())
     
@@ -394,7 +394,7 @@ for i in range(1, 21):
         # Compute masks
         mask_max, mask_std, mask_intersection, mask_max_low_std, \
         mask_max_high_std, mask_std_high_max, mask_max_random_off, \
-        random_mask = compute_masks(all_fc_vals[j], per)
+        random_mask, mask_kst = compute_masks(all_fc_vals[j], per)
         
         # Calculate intersections and zeros
         intersection_zeros = (~mask_std.bool()) & (~mask_max.bool())
@@ -476,7 +476,7 @@ for j in range(0,num_classes):
     # print("Recording activations...")
     # fc_vals = evaluate_gpt2_classi
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off, random_mask = compute_masks(fc_vals,0.3)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off, random_mask, mask_kst = compute_masks(fc_vals,0.3)
     mask_probe = compute_mask_probe(probe_weights[j], 0.5)
     # mask_std = mask_max_low_std
     print("Masking Probe...")
@@ -492,7 +492,7 @@ for j in range(0,num_classes):
     #     intersection_zeros = (~mask_std.bool()) & (~mask_max.bool())
     #     pe += 0.01
         
-    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off, random_mask = compute_masks(fc_vals,per)
+    mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max, mask_max_random_off, random_mask, mask_kst = compute_masks(fc_vals,per)
     
     # intersection vs non intersection max and high mad
     
@@ -536,8 +536,8 @@ for j in range(0,num_classes):
     
     
     
-    tao = 2.5
-    model = mask_range_gpt(model, mask_max, fc_vals, tao, all_fc_vals_pass)        
+    tao = torch.inf
+    model = mask_range_gpt(model, mask_kst, fc_vals, tao, all_fc_vals_pass)        
     t = int(mask_std.shape[0]-torch.count_nonzero(mask_max))
     print("Total Masked :", t)
     total_masked.append(t)

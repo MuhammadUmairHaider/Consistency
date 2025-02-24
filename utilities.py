@@ -196,6 +196,31 @@ def z_score(data):
     
     return z_scores
 
+from scipy import stats
+
+def compute_kst_mask(fc_vals, percent):
+    
+    n_neurons = fc_vals.shape[1]
+    
+    kst_score = np.zeros(n_neurons)
+    for neuron in range(n_neurons):
+        neuron_data = fc_vals[:, neuron]
+        # Normalize data
+        normalized_data = (neuron_data - np.mean(neuron_data)) / np.std(neuron_data)
+        # Run KS test against standard normal
+        ks_stat, _ = stats.kstest(normalized_data, 'norm')
+        
+        kst_score[neuron] = ks_stat
+        
+    kst_score = torch.tensor(kst_score)
+    
+    sorted_indices = torch.argsort(kst_score, descending=False)
+    
+    mask_count = int(percent * n_neurons)
+    mask = torch.ones_like(kst_score)
+    mask[sorted_indices[:mask_count]] = 0.0
+    
+    return mask
 
 def compute_masks(fc_vals, percent):
     # Convert input to numpy array
@@ -238,8 +263,8 @@ def compute_masks(fc_vals, percent):
     mask_max_random_off = compute_max_random_off(mean_vals_tensor, percent)
     
     mask_random = compute_mask_random_off(mean_vals_tensor, percent)
-    
-    return mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off, mask_random
+    kst_mask = compute_kst_mask(fc_vals_array, percent)
+    return mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off, mask_random, kst_mask
 
 
 def compute_intersection_mask(mask1: torch.Tensor, mask2: torch.Tensor, percent: float) -> torch.Tensor:
