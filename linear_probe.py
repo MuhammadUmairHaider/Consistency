@@ -42,6 +42,8 @@ learning_rate = 0.001,
 input_size = 768,
 num_classes = 6):
     use_gpu = torch.cuda.is_available()
+    
+    num_classes = len(dataset)
 
 
     dataset = get_pared_dataset(dataset)

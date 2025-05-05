@@ -196,6 +196,71 @@ def z_score(data):
     
     return z_scores
 
+def compute_pca(vectors, n_components=768):
+    """
+    Compute PCA for a list of vectors using PyTorch SVD on GPU.
+    
+    Parameters:
+    - vectors: List of vectors or tensor of shape (n_vectors, 768)
+    - n_components: Number of principal components to keep
+    
+    Returns:
+    - pca_components: Principal components, shape (n_components, 768)
+    - explained_variance_ratio: Explained variance ratio for each component
+    - transformed_data: Data transformed into PCA space, shape (n_vectors, n_components)
+    - feature_ranking: Indices of features sorted by importance
+    - feature_importance: Importance score for each feature
+    """
+    # Check for GPU availability
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # Convert to tensor if not already
+    if not isinstance(vectors, torch.Tensor):
+        data = torch.tensor(vectors, dtype=torch.float32)
+    else:
+        data = vectors.clone().to(dtype=torch.float32)
+    
+    # Move to GPU
+    data = data.to(device)
+    
+    # Center the data (subtract mean)
+    mean = torch.mean(data, dim=0, keepdim=True)
+    centered_data = data - mean
+    
+    # Scale by sqrt(n-1) for numerical stability
+    n_samples = centered_data.shape[0]
+    scaled_data = centered_data / torch.sqrt(torch.tensor(n_samples - 1, device=device))
+    
+    # Compute SVD
+    U, S, V = torch.linalg.svd(scaled_data, full_matrices=False)
+    
+    # V is already transposed in PyTorch's SVD implementation
+    components = V[:n_components]
+    
+    # Eigenvalues are squares of singular values
+    eigenvalues = S[:n_components]**2
+    
+    # Calculate explained variance ratio
+    total_variance = torch.sum(eigenvalues)
+    explained_variance_ratio = eigenvalues / total_variance
+    
+    # Project data onto principal components
+    transformed_data = torch.matmul(centered_data, components.T)
+    
+    # Compute feature importance
+    feature_importance = torch.sum(torch.abs(components), dim=0)
+    
+    # Get feature ranking (descending order of importance)
+    feature_ranking = torch.argsort(feature_importance, descending=True)
+    
+    return {
+        'pca_components': components,
+        'explained_variance_ratio': explained_variance_ratio,
+        'transformed_data': transformed_data,
+        'feature_ranking': feature_ranking,
+        'feature_importance': feature_importance
+    }
+
 from scipy import stats
 
 def compute_kst_mask(fc_vals, percent):
@@ -225,6 +290,9 @@ def compute_kst_mask(fc_vals, percent):
 def compute_masks(fc_vals, percent):
     # Convert input to numpy array
     fc_vals_array = np.array(fc_vals)
+    print("Shape of the FC:",fc_vals_array.shape)
+    
+    
     
     # normalized_vals = (fc_vals_array - fc_vals_array.min(axis=0)) / (fc_vals_array.max(axis=0) - fc_vals_array.min(axis=0))
     
@@ -263,8 +331,8 @@ def compute_masks(fc_vals, percent):
     mask_max_random_off = compute_max_random_off(mean_vals_tensor, percent)
     
     mask_random = compute_mask_random_off(mean_vals_tensor, percent)
-    kst_mask = compute_kst_mask(fc_vals_array, percent)
-    return mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off, mask_random, kst_mask
+    # kst_mask = compute_kst_mask(fc_vals_array, percent)
+    return mask_max, mask_std, mask_intersection, mask_max_low_std, mask_max_high_std, mask_std_high_max,mask_max_random_off, mask_random#, kst_mask
 
 
 def compute_intersection_mask(mask1: torch.Tensor, mask2: torch.Tensor, percent: float) -> torch.Tensor:
@@ -317,6 +385,7 @@ def compute_intersection_mask(mask1: torch.Tensor, mask2: torch.Tensor, percent:
     return result_mask
 
 def compute_max_mask(values, percent):
+    print(values.shape)
     sorted_indices = torch.argsort(values, descending=True)
     mask_count = int(percent * len(values))
     mask = torch.ones_like(values)
@@ -670,11 +739,13 @@ def manual_generate_v2(model, input_ids, attention_mask):
                     ret[layer_fc1_vals].output[:,-1,:].to('cpu')
                     for layer_fc1_vals in ret
                 ]
+            
         next_token_logits = outputs.logits[:, -1, :]
         next_tokens = torch.argmax(next_token_logits, dim=-1)
         confidences = torch.nn.functional.softmax(next_token_logits, dim=-1)
+        fc1_vals = fc1_vals[0]
         
-        return next_tokens, confidences, fc1_vals[0]
+        return next_tokens, confidences, fc1_vals#.reshape(-1, fc1_vals.shape[2])
         
 
 def evaluate_gpt2_classification(lab ,model, eval_dataset, tokenizer, batch_size=128):
@@ -693,7 +764,8 @@ def evaluate_gpt2_classification(lab ,model, eval_dataset, tokenizer, batch_size
        input_ids = torch.tensor(item['input_ids']).to(device)
        attention_mask = torch.tensor(item['attention_mask']).to(device)
         
-       generated_token, confidences, fc_vals = manual_generate_v2(model,input_ids,attention_mask)
+       with torch.no_grad():
+           generated_token, confidences, fc_vals = manual_generate_v2(model,input_ids,attention_mask)
        
        for true_label, predicted_token, conf, fc in zip(item[lab], generated_token, confidences, fc_vals):
             true_label = tokenizer.encode(eval_dataset.features[lab].int2str(true_label.item()), add_special_tokens=False, truncation=True, return_tensors='pt').squeeze()
@@ -784,11 +856,11 @@ def evaluate_gpt2_classification_batch(model, eval_dataset, tokenizer, batch_siz
 
 def mask_range_gpt(model, mask, fc_vals, tao, all_fc_vals):
     
-    all_fc_vals = np.concatenate(all_fc_vals)
+    # all_fc_vals = np.concatenate(all_fc_vals)
     
     # all_fc_vals = torch.cat(all_fc_vals, dim=1)
 
-    mean_comp = torch.tensor(np.mean(all_fc_vals, axis=0))
+    # mean_comp = torch.tensor(np.mean(all_fc_vals, axis=0))
     
     
     mean = torch.tensor(np.mean(fc_vals, axis=0))
@@ -1146,6 +1218,522 @@ def evaluate_llma_classification(model, eval_dataset, tokenizer):
 
     return round(correct/i,4), round(confidence/i,4), fc_vals
 
+import torch
+from torch import nn
+from typing import Tuple
+
+def manual_generate_llma_batch_insert(
+    model: nn.Module,
+    input_ids: torch.LongTensor,          # (B, Lₘᵢₙ ≤ … ≤ Lₘₐₓ)
+    attention_mask: torch.LongTensor,     # (B, Lₘₐₓ)
+    orig_lens: torch.LongTensor,          # (B,)
+    max_new_tokens: int = 5,
+) -> Tuple[torch.LongTensor, torch.FloatTensor, torch.FloatTensor]:
+    """
+    Same signature as before, but the final tensor keeps the shape
+    (B, max_orig_len + max_new_tokens) and new tokens are *inserted*
+    at orig_len + step rather than tacked to the end.
+    """
+
+    device        = input_ids.device
+    B             = input_ids.size(0)
+    pad_token_id  = getattr(model.config, "pad_token_id", 0)
+
+    max_orig_len  = input_ids.size(1)                      # already padded to this
+    full_len      = max_orig_len + max_new_tokens          # final width
+
+    # 1) Pre‑allocate padded canvases
+    generated = torch.full((B, full_len),
+                           pad_token_id,
+                           dtype=input_ids.dtype,
+                           device=device)
+    generated[:, :max_orig_len] = input_ids
+
+    full_mask = torch.zeros_like(generated, dtype=attention_mask.dtype)
+    full_mask[:, :max_orig_len] = attention_mask
+
+    # Vector pointing at the *next* free slot for each row
+    insert_pos = orig_lens.clone()                         # (B,)
+
+    # -------------------------------------------------- #
+    # Step‑0: run once on the original context
+    # -------------------------------------------------- #
+    with torch.no_grad(), nethook.TraceDict(model, ['model.mask_layer']) as ret:
+        logits0 = model(
+            input_ids      = input_ids,
+            attention_mask = attention_mask
+        ).logits                                            # (B, Lₘₐₓ, vocab)
+
+        next_logits  = logits0[torch.arange(B), orig_lens-1, :]   # (B, vocab)
+        step0_conf   = torch.softmax(next_logits, dim=-1).cpu()   # (B, vocab)
+        next_tokens  = torch.argmax(next_logits, dim=-1)          # (B,)
+
+        # FC activations at the last real token
+        per_layer = [
+            layer_out[torch.arange(B, device=device), orig_lens-1, :].cpu()
+            for layer_out in (ret[k].output for k in ret)
+        ]
+        step0_fc_vals = torch.stack(per_layer, dim=1)       # (B, n_layers, hidden)
+
+    # Insert step‑0 tokens
+    generated[torch.arange(B), insert_pos]  = next_tokens
+    full_mask[torch.arange(B), insert_pos]  = 1
+    insert_pos += 1                                         # advance pointers
+
+    # --------------------------------------------- #
+    # Steps 1 .. max_new_tokens‑1
+    # --------------------------------------------- #
+    for _ in range(max_new_tokens - 1):
+        # Slice only up to the furthest used column for a tiny speed win
+        active_len = insert_pos.max().item()                # int
+        with torch.no_grad():
+            logits = model(
+                input_ids      = generated[:, :active_len],
+                attention_mask = full_mask[:, :active_len]
+            ).logits                                         # (B, active_len, vocab)
+            last_pos    = insert_pos - 1
+            next_logits = logits[
+            torch.arange(B, device=device),last_pos,:]
+            next_tokens = torch.argmax(next_logits, dim=-1) # (B,)
+
+        # Insert at current pointers
+        generated[torch.arange(B), insert_pos] = next_tokens
+        full_mask[torch.arange(B), insert_pos] = 1
+        insert_pos += 1
+
+    return generated, step0_conf, step0_fc_vals
+
+
+
+
+
+
+
+
+# --------------------------------------------------------------------------- #
+#                   Evaluation loop (classification)                          #
+# --------------------------------------------------------------------------- #
+def evaluate_llma_classification_batch(model, eval_dataset, tokenizer,
+                                       batch_size: int = 8,
+                                       device: str = "cuda",
+                                       max_new_tokens: int = 5):
+    label_mapping = {
+        0:'Company', 1:'EducationalInstitution', 2:'Artist', 3:'Athlete',
+        4:'OfficeHolder', 5:'MeanOfTransportation', 6:'Building',
+        7:'NaturalPlace', 8:'Village', 9:'Animal', 10:'Plant',
+        11:'Album', 12:'Film', 13:'WrittenWork'
+    }
+
+    model.to(device).eval()
+    total, correct, total_conf = 0, 0, 0.0
+    fc_vals_correct = []
+
+    loop = tqdm(range(0, len(eval_dataset), batch_size), desc="Batches")
+
+    for start in loop:
+        batch = eval_dataset[start : start + batch_size]
+        texts  = batch["text"]
+        labels = batch["label"]
+
+        # ------------- build prompts -----------------------------------------
+        prompts, gold_labels = [], []
+        for text, lab_i in zip(texts, labels):
+            
+
+            gold = label_mapping[int(lab_i)]            # map int -> string
+            gold_labels.append(gold)
+            prompts.append(
+                '''Choose from one of these categories: Company, EducationalInstitution, Artist, Athlete, OfficeHolder, MeanOfTransportation, Building, NaturalPlace, Village, Animal, Plant, Album, Film, WrittenWork. Be careful distinguishing between similar categories.
+
+{{ Abbott of Farnham E D Abbott Limited was a British coachbuilding business based in Farnham Surrey trading under that name from 1929. A major part of their output was under sub-contract to motor vehicle manufacturers. Their business closed in 1972.:Company}}
+
+{{ Dubai Gem Private School (DGPS) is a British school located in the Oud Metha area of Dubai United Arab Emirates. Dubai Gem Nursery is located in Jumeirah. Together the institutions enroll almost 1500 students aged 3 to 18.:EducationalInstitution}}
+
+{{ Martin Marty McKinnon (born 5 July 1975 in Adelaide) is a former Australian rules footballer who played with Adelaide Geelong and the Brisbane Lions in the Australian Football League (AFL).McKinnon was recruited by Adelaide in the 1992 AFL Draft with their first ever national draft pick. He was the youngest player on Adelaide's list at the time and played for Central District in the SANFL when not appearing with Adelaide.:Athlete}}
+
+{{ The Wedell-Williams XP-34 was a fighter aircraft design submitted to the United States Army Air Corps (USAAC) before World War II by Marguerite Clark Williams widow of millionaire Harry P. Williams former owner and co-founder of the Wedell-Williams Air Service Corporation.:MeanOfTransportation}}
+
+{{"{}":'''.format(text)
+            )
+
+        enc = tokenizer(prompts, padding=True, return_tensors='pt').to(device)
+        orig_lens = enc['attention_mask'].sum(dim=1)          # (B,)
+
+        # ------------- generation + FC capture -------------------------------
+        (gen, step0_conf, step0_fc) = manual_generate_llma_batch_insert(
+            model,
+            enc['input_ids'], enc['attention_mask'],
+            orig_lens,
+            max_new_tokens=max_new_tokens
+        )
+
+        # ------------- post‑process ------------------------------------------
+        for i, gold in enumerate(gold_labels):
+            gen_text = tokenizer.decode(gen[i, orig_lens[i]:], skip_special_tokens=True)  # strip context
+            
+            pred = gen_text.split('}')[0].strip('"').strip()
+            # print("--------",pred)
+            total += 1
+            if pred == gold:
+                correct += 1
+                fc_vals_correct.append(step0_fc[i].squeeze())            # (n_layers, hid)
+            else:
+                print("Original: ", gold)
+                print("Predicted: ", pred)
+                print("Gen_text", gen_text)
+
+            # confidence for gold label token in first step
+            gold_tok = tokenizer.encode(gold, add_special_tokens=False)[0]
+            total_conf += step0_conf[i, gold_tok].item()
+
+        loop.set_description(f"Accuracy: {100*correct/total:.1f}%")
+
+    accuracy   = round(correct / total, 4)
+    mean_conf  = round(total_conf / total, 4)
+    fc_vals    = torch.stack(fc_vals_correct) if fc_vals_correct else torch.tensor([])
+
+    return accuracy, mean_conf, fc_vals
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from rouge_score import rouge_scorer
+def evaluate_llma_summarization(model, eval_dataset, tokenizer, max_samples=100):
+    # Take a sample of the dataset
+    if len(eval_dataset) > max_samples:
+        eval_dataset = eval_dataset.select(range(max_samples))
+        
+    progress_bar = tqdm(range(len(eval_dataset)), desc="Processing examples")
+    rouge_scores = {'rouge1': [], 'rouge2': [], 'rougeL': []}
+    fc_vals = []
+    scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+    
+    model.to('cuda')
+    model.eval()
+    
+    for i in progress_bar:
+        example = eval_dataset[i]  # Get the example by index
+        prompt = """
+Example:
+Article: Facebook page supporting tradition gains one million 'likes' in a day. 'Don't let the Netherlands' most beautiful tradition disappear,' it says. UN has condemned the tradition claiming it reflects racial prejudice.
+Summary: Facebook page supporting controversial Dutch tradition gains massive support despite UN criticism.
+
+Now generate a short summary for the following:
+Article:
+{text}
+Summary:
+""".format(text=example['article'][:1000])  # Use article field from CNN/Daily Mail
+        
+        input_ids = tokenizer([prompt, prompt], return_tensors='pt')
+        
+        # Generate output
+        output = manual_generate_llma(
+            model,
+            input_ids['input_ids'].to('cuda'),
+            input_ids['attention_mask'].to('cuda'),
+            input_ids['input_ids'].shape[1] + 150
+        )
+        
+        # Get predicted summary
+        predicted_summary = tokenizer.decode(
+            output[0][0][input_ids['input_ids'].shape[1]:],
+            skip_special_tokens=True
+        ).strip()
+        
+        # Calculate ROUGE scores
+        scores = scorer.score(example['highlights'], predicted_summary)
+        
+        for metric in rouge_scores:
+            rouge_scores[metric].append(scores[metric].fmeasure)
+        
+        fc_vals.append(output[2][0][0].squeeze())
+        
+        # Update progress bar with current ROUGE-1 score
+        avg_rouge1 = np.mean(rouge_scores['rouge1'])
+        progress_bar.set_description(f"ROUGE-1: {avg_rouge1:.4f}")
+        
+    # Calculate average scores
+    avg_scores = {metric: np.mean(values) for metric, values in rouge_scores.items()}
+    
+    return avg_scores, fc_vals
+
+
+
+
+def evaluate_llma_nli(model, eval_dataset, tokenizer, max_samples=100):
+    if len(eval_dataset) > max_samples:
+        eval_dataset = eval_dataset.select(range(max_samples))
+
+    progress_bar      = tqdm(range(len(eval_dataset)), desc="Processing examples")
+    gold_labels       = []
+    pred_labels       = []
+    fc_vals_correct   = []          # vectors at the class‑token position
+
+    model.to("cuda").eval()
+    id2lbl = {0: "entailment", 1: "neutral", 2: "contradiction"}
+
+    for idx in progress_bar:
+        ex = eval_dataset[idx]
+        prompt = FEW_SHOT.format(premise=ex["premise"].strip(),
+                                 hypothesis=ex["hypothesis"].strip())
+
+        inputs      = tokenizer([prompt, prompt], return_tensors="pt")
+        prompt_len  = inputs["input_ids"].shape[1]
+
+        out = manual_generate_llma(
+                  model,
+                  inputs["input_ids"].to("cuda"),
+                  inputs["attention_mask"].to("cuda"),
+                  max_new_tokens=5
+              )
+
+        gen_ids       = out[0][0][prompt_len:]              # generated ids only
+        first_tok_id  = gen_ids[0].item()                   # id of class token
+        gen_text      = tokenizer.decode(first_tok_id).lower().strip()
+
+        # map to label
+        if gen_text.startswith("entail"):
+            pred = "entailment"
+        elif gen_text.startswith("contrad"):
+            pred = "contradiction"
+        else:
+            pred = "neutral"
+
+        gold = id2lbl.get(ex["label"], ex["label"])
+        pred_labels.append(pred)
+        gold_labels.append(gold)
+
+        # -------- take fc at the position of that first generated token -------
+        class_vec = out[2][0][prompt_len]   # [batch=0, seq‑pos=prompt_len, hidden]
+        if pred == gold:
+            fc_vals_correct.append(class_vec.squeeze())
+
+        progress_bar.set_description(
+            f"ACC: {accuracy_score(gold_labels, pred_labels):.4f}"
+        )
+
+    # aggregate metrics
+    acc  = accuracy_score(gold_labels, pred_labels)
+    prec, rec, f1, _ = precision_recall_fscore_support(
+                           gold_labels, pred_labels, average="macro", zero_division=0
+                       )
+
+    metrics = {"accuracy": acc,
+               "macro_precision": prec,
+               "macro_recall": rec,
+               "macro_f1": f1}
+
+    return metrics, fc_vals_correct
+
+
+
+
+from collections import Counter
+import re
+
+def evaluate_llma_squad(model, eval_dataset, tokenizer, max_samples=50):
+    """
+    Evaluate the model on the SQuAD question answering task.
+    
+    Args:
+        model: The model to evaluate
+        eval_dataset: The SQuAD dataset to evaluate on
+        tokenizer: The tokenizer to use
+        max_samples: Maximum number of samples to evaluate
+    
+    Returns:
+        scores: Dictionary containing EM (Exact Match) and F1 scores
+    """
+    # Take a sample of the dataset
+    if len(eval_dataset) > max_samples:
+        eval_dataset = eval_dataset.select(range(max_samples))
+    
+    progress_bar = tqdm(range(len(eval_dataset)), desc="Evaluating QA")
+    exact_matches = []
+    f1_scores = []
+    
+    # Get device
+    device = next(model.parameters()).device
+    
+    model.eval()
+    
+    for i in progress_bar:
+        try:
+            # Get the example by index
+            example = eval_dataset[i]
+            
+            # Format prompt for question answering
+            prompt = f"""Context: {example['context']}
+
+Question: {example['question']}
+
+Answer:"""
+            
+            # Tokenize input
+            inputs = tokenizer([prompt], return_tensors="pt", truncation=True, max_length=512)
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            # Generate answer
+            with torch.no_grad():
+                output = model.generate(
+                    inputs["input_ids"],
+                    attention_mask=inputs["attention_mask"],
+                    max_new_tokens=50,
+                    num_beams=1,
+                    early_stopping=True
+                )
+            
+            # Decode generated answer
+            predicted_answer = tokenizer.decode(
+                output[0, inputs["input_ids"].shape[1]:],
+                skip_special_tokens=True
+            ).strip()
+            
+            # Get ground truth answer
+            ground_truth = example['answers']['text'][0]  # Using first answer as reference
+            
+            # Calculate metrics
+            exact_match = compute_exact_match(predicted_answer, ground_truth)
+            f1 = compute_f1_score(predicted_answer, ground_truth)
+            
+            exact_matches.append(exact_match)
+            f1_scores.append(f1)
+            
+            # Update progress bar
+            avg_em = np.mean(exact_matches)
+            avg_f1 = np.mean(f1_scores)
+            progress_bar.set_description(f"EM: {avg_em:.4f}, F1: {avg_f1:.4f}")
+        
+        except Exception as e:
+            print(f"Error processing example {i}: {e}")
+            continue
+    
+    # Calculate final scores
+    scores = {
+        "exact_match": np.mean(exact_matches) if exact_matches else 0.0,
+        "f1": np.mean(f1_scores) if f1_scores else 0.0
+    }
+    
+    return scores
+
+def compute_exact_match(prediction, ground_truth):
+    """
+    Calculate exact match score (1 if prediction matches ground truth exactly, 0 otherwise)
+    """
+    prediction = normalize_answer(prediction)
+    ground_truth = normalize_answer(ground_truth)
+    return float(prediction == ground_truth)
+
+def compute_f1_score(prediction, ground_truth):
+    """
+    Calculate word-level F1 score between prediction and ground truth
+    """
+    prediction_tokens = normalize_answer(prediction).split()
+    ground_truth_tokens = normalize_answer(ground_truth).split()
+    
+    # Edge cases
+    if len(ground_truth_tokens) == 0 or len(prediction_tokens) == 0:
+        return int(ground_truth_tokens == prediction_tokens)
+    
+    # Count common tokens
+    common = Counter(prediction_tokens) & Counter(ground_truth_tokens)
+    num_common = sum(common.values())
+    
+    # Edge case - both empty
+    if num_common == 0:
+        return 0
+    
+    precision = num_common / len(prediction_tokens)
+    recall = num_common / len(ground_truth_tokens)
+    f1 = (2 * precision * recall) / (precision + recall)
+    
+    return f1
+
+def normalize_answer(text):
+    """
+    Normalize answer text for comparison (lowercase, remove articles, punctuation, etc.)
+    """
+    # Convert to lowercase
+    text = text.lower()
+    
+    # Remove articles and punctuation
+    text = re.sub(r'\b(a|an|the)\b', ' ', text)
+    text = re.sub(r'[^\w\s]', ' ', text)
+    
+    # Remove extra whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
+
+
+
+
+
+
+def evaluate_llma_language_modeling(model, eval_dataset, tokenizer, max_samples=50):
+    """
+    Evaluate the perplexity of the model on a language modeling task.
+    
+    Args:
+        model: The model to evaluate
+        eval_dataset: The dataset to evaluate on
+        tokenizer: The tokenizer to use
+        max_samples: Maximum number of samples to evaluate
+    
+    Returns:
+        perplexity: The average perplexity across samples
+    """
+    # Take a sample of the dataset
+    if len(eval_dataset) > max_samples:
+        eval_dataset = eval_dataset.select(range(max_samples))
+    
+    progress_bar = tqdm(range(len(eval_dataset)), desc="Evaluating LM")
+    total_loss = 0
+    total_tokens = 0
+    
+    # Get device
+    device = next(model.parameters()).device
+    
+    model.eval()
+    
+    for i in progress_bar:
+        # Get the example by index
+        example = eval_dataset[i]
+        
+        # Tokenize input
+        inputs = tokenizer(example['text'], return_tensors="pt", truncation=True, max_length=512)
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        
+        with torch.no_grad():
+            outputs = model(**inputs, labels=inputs["input_ids"])
+            loss = outputs.loss
+            
+        total_loss += loss.item() * inputs["input_ids"].size(1)
+        total_tokens += inputs["input_ids"].size(1)
+        
+        # Update progress bar with current perplexity
+        current_perplexity = torch.exp(torch.tensor(total_loss / total_tokens)).item()
+        progress_bar.set_description(f"Perplexity: {current_perplexity:.4f}")
+    
+    # Calculate perplexity
+    perplexity = torch.exp(torch.tensor(total_loss / total_tokens)).item()
+    
+    return {"perplexity": perplexity}
+
 def reset_llma(model):
     model.model.mask_layer.lower_bound = torch.tensor(float('inf')).to(device)
     model.model.mask_layer.upper_bound = torch.tensor(float('-inf')).to(device)
@@ -1153,6 +1741,7 @@ def reset_llma(model):
 
 
 def mask_range_llma(model, mask, fc_vals, tao):
+    fc_vals = np.array(fc_vals)
     mean = torch.tensor(np.mean(fc_vals, axis=0))
     std = torch.tensor(np.std(fc_vals, axis=0))
     mask = mask.to(torch.bool)
@@ -1164,5 +1753,6 @@ def mask_range_llma(model, mask, fc_vals, tao):
     
     model.model.mask_layer.lower_bound = lower_bound.to(device)
     model.model.mask_layer.upper_bound = upper_bound.to(device)
+    # model.model.mask_layer.replacement_values = mean.to(device)
     
     return model

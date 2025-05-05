@@ -1,0 +1,52 @@
+Results for Main Task (Summarization):
++-------------------+---------+---------+---------+
+|    Masking Type   | ROUGE-1 | ROUGE-2 | ROUGE-L |
++-------------------+---------+---------+---------+
+| Base (No Masking) |  0.2741 |  0.1313 |  0.1966 |
+|    MAX Masking    |  0.2370 |  0.1045 |  0.1746 |
+|   Range Masking   |  0.2431 |  0.1088 |  0.1782 |
++-------------------+---------+---------+---------+
+
+Results for Auxiliary Task 1 (Language Modeling):
++-------------------+------------+-----------------------+
+|    Masking Type   | Perplexity | Perplexity Increase % |
++-------------------+------------+-----------------------+
+| Base (No Masking) |   6.2546   |           0%          |
+|    MAX Masking    |   8.1924   |         30.98%        |
+|   Range Masking   |   7.4089   |         18.46%        |
++-------------------+------------+-----------------------+
+
+Results for Auxiliary Task 2 (SQuAD Question Answering):
++-------------------+-------------+----------+---------+---------+
+|    Masking Type   | Exact Match | F1 Score | EM Drop | F1 Drop |
++-------------------+-------------+----------+---------+---------+
+| Base (No Masking) |    0.5200   |  0.6063  |  0.0000 |  0.0000 |
+|    MAX Masking    |    0.4000   |  0.5362  |  0.1200 |  0.0701 |
+|   Range Masking   |    0.4400   |  0.5993  |  0.0800 |  0.0070 |
++-------------------+-------------+----------+---------+---------+
+
+Language Modeling Degradation Analysis:
++---------------+--------------+-----------------------+-------------------------------------+
+|  Masking Type | ROUGE-1 Drop | Perplexity Increase % | Degradation Ratio (lower is better) |
++---------------+--------------+-----------------------+-------------------------------------+
+| Range Masking |    0.0310    |         18.46%        |                5.9502               |
+|  MAX Masking  |    0.0372    |         30.98%        |                8.3319               |
++---------------+--------------+-----------------------+-------------------------------------+
+
+SQuAD QA Degradation Analysis:
++---------------+---------------------+--------------+-------------------------------------+
+|  Masking Type | ROUGE-1 Drop (Main) | F1 Drop (QA) | Degradation Ratio (lower is better) |
++---------------+---------------------+--------------+-------------------------------------+
+| Range Masking |        0.0310       |    0.0070    |                0.2254               |
+|  MAX Masking  |        0.0372       |    0.0701    |                1.8857               |
++---------------+---------------------+--------------+-------------------------------------+
+
+Layer: 27
+Masking Percentage: 0.3
+Range Masking Tau: 3.5
+
+Specificity Analysis:
+LM Specificity (MAX/Range): 1.4003
+QA Specificity (MAX/Range): 8.3678
+Combined Specificity: 4.8840
+Range masking is 4.88x more specific than MAX masking on average

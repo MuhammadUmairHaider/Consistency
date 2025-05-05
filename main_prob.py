@@ -324,72 +324,74 @@ for j in range(0,num_classes):
     
     print("Class ",j, "complement base accuracy: ", acc[0], acc[1])
     
-per = 0
+per = 0.01
 tables = []
-for i in range(0,20):
-    per = 0.02+(i*0.005)
-    print("percentage: ", per)
+# for i in range(0,20):
+#     per = 0.02+(i*0.005)
+print("percentage: ", per)
+
+# model.transformer.mask_layer.fit_kde(all_fc_vals, threshold=per)
+
+model.transformer.mask_layer.fit_histogram(all_fc_vals, threshold=per, num_bins=1000)
     
-    model.transformer.mask_layer.fit_kde(all_fc_vals, threshold=per)
-        
-        
-        
-    results_table = PrettyTable()
+    
+    
+results_table = PrettyTable()
+if(compliment):
+    results_table.field_names = results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "STD Accuracy", "STD Confidence", "STD compliment ACC", "STD compliment Conf"]
+
+class_labels = []
+std_masked_counts = []
+std_accuracies = []
+std_confidences = []
+std_comp_acc = []
+std_comp_conf = []
+max_masked_counts = []
+max_accuracies = []
+max_confidences = []
+max_comp_acc = []
+max_comp_conf = []
+diff_from_max = []
+total_masked = []
+    
+
+for j in range(0,num_classes):
+    model.transformer.mask_layer.set_class(j)
+    fc_vals = all_fc_vals[j]
+    # model = mask_gpt2(model, torch.ones(768).to('cuda'))
+    dataset = tokenized_dataset1.filter(lambda x: x[lab] in [j])
+    dataset_recording = recording_dataset.filter(lambda x: x[lab] in [j])
+    dataset_complement = tokenized_dataset1.filter(lambda x: x[lab] not in [j])
+    
+
+    class_labels.append(f"Class {j}")
+    # acc = evaluate_gpt2_classification(lab, model, dataset, tokenizer)
+    print("Class ",j, "base accuracy: ", base_accuracies[j], base_confidences[j])
     if(compliment):
-        results_table.field_names = results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "STD Accuracy", "STD Confidence", "STD compliment ACC", "STD compliment Conf"]
-
-    class_labels = []
-    std_masked_counts = []
-    std_accuracies = []
-    std_confidences = []
-    std_comp_acc = []
-    std_comp_conf = []
-    max_masked_counts = []
-    max_accuracies = []
-    max_confidences = []
-    max_comp_acc = []
-    max_comp_conf = []
-    diff_from_max = []
-    total_masked = []
-        
-
-    for j in range(0,num_classes):
-        model.transformer.mask_layer.set_class(j)
-        fc_vals = all_fc_vals[j]
-        # model = mask_gpt2(model, torch.ones(768).to('cuda'))
-        dataset = tokenized_dataset1.filter(lambda x: x[lab] in [j])
-        dataset_recording = recording_dataset.filter(lambda x: x[lab] in [j])
-        dataset_complement = tokenized_dataset1.filter(lambda x: x[lab] not in [j])
-        
-
-        class_labels.append(f"Class {j}")
-        # acc = evaluate_gpt2_classification(lab, model, dataset, tokenizer)
-        print("Class ",j, "base accuracy: ", base_accuracies[j], base_confidences[j])
-        if(compliment):
-            print("Class ",j, "complement base accuracy: ", base_comp_acc[j], base_comp_conf[j])
-        acc = evaluate_gpt2_classification(lab, model, dataset, tokenizer) 
-        print("accuracy after masking STD: ", acc[0], acc[1])
-        std_accuracies.append(acc[0])
-        std_confidences.append(acc[1])
-        if(compliment):
-            acc = evaluate_gpt2_classification(lab, model, dataset_complement, tokenizer)
-            print("accuracy after masking STD on complement: ", acc[0], acc[1])
-            std_comp_acc.append(acc[0])
-            std_comp_conf.append(acc[1])
-        if(compliment):
-            results_table.add_row([
-                class_labels[j],
-                base_accuracies[j],
-                base_confidences[j],
-                base_comp_acc[j],
-                base_comp_conf[j],
-                std_accuracies[j],
-                std_confidences[j],
-                std_comp_acc[j],
-                std_comp_conf[j],
-            ])            
-    print(results_table)
-    tables.append(results_table)
+        print("Class ",j, "complement base accuracy: ", base_comp_acc[j], base_comp_conf[j])
+    acc = evaluate_gpt2_classification(lab, model, dataset, tokenizer) 
+    print("accuracy after masking STD: ", acc[0], acc[1])
+    std_accuracies.append(acc[0])
+    std_confidences.append(acc[1])
+    if(compliment):
+        acc = evaluate_gpt2_classification(lab, model, dataset_complement, tokenizer)
+        print("accuracy after masking STD on complement: ", acc[0], acc[1])
+        std_comp_acc.append(acc[0])
+        std_comp_conf.append(acc[1])
+    if(compliment):
+        results_table.add_row([
+            class_labels[j],
+            base_accuracies[j],
+            base_confidences[j],
+            base_comp_acc[j],
+            base_comp_conf[j],
+            std_accuracies[j],
+            std_confidences[j],
+            std_comp_acc[j],
+            std_comp_conf[j],
+        ])            
+print(results_table)
+tables.append(results_table)
 per = 0
 for table in tables:
     per += 0.01

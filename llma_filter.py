@@ -2,18 +2,18 @@ from huggingface_hub import login
 login("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")
 
 
-from models.lama import LlamaForCausalLM
+from models.gemma import GemmaForCausalLM
 import torch
 
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-model1 = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-3B")
+model1 = AutoModelForCausalLM.from_pretrained("google/gemma-2b")
 
-model1.config.m_layer = 27
+model1.config.m_layer = 17
 import os
 
-base_path = os.path.join("model_weights", 'llama-emotion-classification')
+base_path = os.path.join("model_weights", 'gemma')
 if not os.path.exists(base_path):
     os.makedirs(base_path)
 
@@ -21,12 +21,12 @@ weights_path = os.path.join(base_path, "weights.pth")
 
 # torch.save(model1.state_dict(), weights_path)
 
-model = LlamaForCausalLM(model1.config)
+model = GemmaForCausalLM(model1.config)
 
 model.load_state_dict(torch.load(weights_path))
 
 
-tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B")
+tokenizer = AutoTokenizer.from_pretrained("google/gemma-2b")
 
 import nethook
 def manual_generate(model, input_ids, attention_mask, max_length):
@@ -87,7 +87,7 @@ print(f"Loaded {len(dataset_all)} examples from SST2 dataset")
 print(dataset_all.column_names)
 
 # Create label mapping
-label_mapping = {0: 'neg', 1: 'pos'}
+label_mapping = {0: 'Company', 1: 'EducationalInstitution', 2: 'Artist', 3: 'Athlete', 4: 'OfficeHolder', 5: 'MeanOfTransportation', 6: 'Building', 7: 'NaturalPlace', 8: 'Village', 9: 'Animal', 10: 'Plant', 11: 'Album', 12: 'Film', 13: 'WrittenWork'}
 
 # Initialize list to store correctly predicted examples
 correct_predictions = []
@@ -108,20 +108,26 @@ model.to('cuda')
 model.eval()
 
 # Make counter for each class
-class_counts = {0: 0, 1: 0}
+class_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0, 13: 0}
 
 for example in progress_bar:
     
     # example[text_tag] = '*'*400
     # only for IMDB
-    example[text_tag] = example[text_tag][:350]
+    # example[text_tag] = example[text_tag][:350]
     
     # Create prompt
-    prompt = '''Choose from one of these categories: neg, pos. Be careful distinguishing between similar categories.
-{{The only reason I DVRd this movie was because 1. I live in Cleveland and Shaq plays basketball for us now and 2. I've always heard how awful it was. The movie did not disappoint. The best parts were Shaq's outfits. The worst parts were, well, just about everything else. My 12 year old son and I just squirmed and couldn't look at the screen when Shaq started rapping and we kept wondering why Max didn't wish for Kazzam to fix that front tooth of his! But for all it's terribleness we just couldn't stop watching it, the story sucked you in, like a black hole or quicksand or a tar pit, it was hypnotic. But it was worth it for the laughs and just to say that we actually watched "Kazzam".:neg}}
-{{Timberlake's performance almost made attack the screen. It wasn't all bad, I just think the reporters role was wrong for him.<br /><br />LL Cool J played the typical rapper role, toughest,baddest guy around. I don't think the cracked a smile in the whole movie, not even when proposed to his girlfriend.<br /><br />Morgan Freeman pretty much carried the whole movie. He was has some funny scenes which are the high point of the movie.<br /><br />Kevin Spacey wasn't good or bad he was just "there".<br /><br />Overall it's a Dull movie. bad plot. a lot of bad acting or wrong roles for actors.:neg}}
-{{'Deliverance' is a brilliant condensed epic of a group of thoroughly modern men who embark on a canoe trip to briefly commune with nature, and instead have to fight for their sanity, their lives, and perhaps even their souls. The film has aged well. Despite being made in the early Seventies, it certainly doesn't look particularly dated. It still possesses a visceral punch and iconic status as a dramatic post-'Death of the Sixties' philosophical-and-cultural shock vehicle. There are very few films with similar conceits that can compare favourably to it, although the legendary Sam Peckinpah's stuff would have to be up there. Yes, there has been considerable debate and discussion about the film's most confronting scene (which I won't expand upon here) - and undoubtedly one of the most confronting scenes in the entire history of the cinematic medium - but what surprises about this film is how achingly beautiful it is at times. This seems to be generally overlooked (yet in retrospect quite understandably so). The cinematography that captures the essence of the vanishing, fragile river wilderness is often absolutely stunning, and it counterbalances the film as, in a moment of brief madness, we the viewers - along with the characters themselves - are plunged into unrelenting nightmare. 'Deliverance's narrative is fittingly lean and sinewy, and it is surprising how quickly events unfold from point of establishment, through to crisis, and aftermath. It all takes place very quickly, which lends a sense of very real urgency to the film. The setting is established effectively through the opening credits. The characters are all well-drawn despite limited time spent on back story. We know just enough about them to know them for the kind of man they are, like them and ultimately fear for them when all goes to hell. The conflict and violence within the movie seems to erupt out of nowhere, with a frightening lack of logic. This is author James Dickey's theme - that any prevailing romanticism about the nature of Man's perceived inherent 'goodness' can only wilt and die when his barely suppressed animal instincts come to the fore. There are no demons or bogeymen here. The predatory hillbillies - as the film's central villains - are merely crude, terrifyingly amoral cousins of our protagonists. They shock because their evil is petty and tangible. The film has no peripheral characters. All reflect something about the weaknesses and uncertainties of urbanised Homo Sapiens in the latter 20th century, and all are very real and recognisable. Burt Reynolds is wonderful in this movie as the gung-ho and almost fatally over-confident Survivalist, Lewis, and it is a shame to think that he really couldn't recapture his brief moment of dramatic glory throughout the rest of his still sputtering up-and-down career ('Boogie Nights' excluded, perhaps). Trust me, if your are not a Reynolds fan, you WILL be impressed with his performance here. John Voight is his usual effortlessly accomplished self, and Ned Beatty and Ronny Cox both make significant contributions. This is simply a great quartet of actors. To conclude, I must speculate as to if and when 'Deliverance' author James Dickey's 'To the White Sea' will be made. For those that enjoyed (?) this film, TTWS is a similarly harrowing tale of an American Air Force pilot's struggle for survival after being shot down over the Japanese mainland during WW2. It's more of the typically bleak existentialism and primordial savagery that is Dickey's trademark, but it has all the makings of a truly spectacular, poetic cinematic experience. There was the suggestion a few years ago that the Coen brothers might be producing it, but that eventually came to nothing. Being an avid Coen-o-phile it disappoints me to think what might have been had they gotten the green light on TTWS, rather than their last couple of relatively undistinguished efforts. Returning to 'Deliverance', it's impossible to imagine a movie of such honest, unnerving brutality being made in these times, and that is pretty shameful. We, the cinema-going public, are all the poorer for this.:pos}}
-{{"{}":'''.format(example[text_tag])
+    prompt = '''Choose from one of these categories: Company, EducationalInstitution, Artist, Athlete, OfficeHolder, MeanOfTransportation, Building, NaturalPlace, Village, Animal, Plant, Album, Film, WrittenWork. Be careful distinguishing between similar categories.
+
+{{ Abbott of Farnham E D Abbott Limited was a British coachbuilding business based in Farnham Surrey trading under that name from 1929. A major part of their output was under sub-contract to motor vehicle manufacturers. Their business closed in 1972.:Company}}
+
+{{ Dubai Gem Private School (DGPS) is a British school located in the Oud Metha area of Dubai United Arab Emirates. Dubai Gem Nursery is located in Jumeirah. Together the institutions enroll almost 1500 students aged 3 to 18.:EducationalInstitution}}
+
+{{ Martin Marty McKinnon (born 5 July 1975 in Adelaide) is a former Australian rules footballer who played with Adelaide Geelong and the Brisbane Lions in the Australian Football League (AFL).McKinnon was recruited by Adelaide in the 1992 AFL Draft with their first ever national draft pick. He was the youngest player on Adelaide's list at the time and played for Central District in the SANFL when not appearing with Adelaide.:Athlete}}
+
+{{ The Wedell-Williams XP-34 was a fighter aircraft design submitted to the United States Army Air Corps (USAAC) before World War II by Marguerite Clark Williams widow of millionaire Harry P. Williams former owner and co-founder of the Wedell-Williams Air Service Corporation.:MeanOfTransportation}}
+
+{{"{}":'''.format(example['text'])
     
     input_ids = tokenizer([prompt, prompt], return_tensors='pt')
     
@@ -178,7 +184,7 @@ correct_dataset = Dataset.from_list(correct_predictions)
 correct_dataset.save_to_disk('correct_predictions_dataset')
 
 # Optionally, also save as JSON for easier inspection
-with open('correct_predictions_IMDB.json', 'w') as f:
+with open('correct_gemma_predictions_db14.json', 'w') as f:
     json.dump(correct_predictions, f, indent=4)
 
 print(f"Saved {len(correct_predictions)} correctly predicted examples to dataset")

@@ -9,7 +9,7 @@ from huggingface_hub import login
 login("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")
 
 # Load the dataset from disk
-correct_dataset = load_dataset("json", data_files="correct_predictions_DB_14.json")
+correct_dataset = load_dataset("json", data_files="llama_correct_datasets/correct_predictions_DB_14.json")
 
 # correct_dataset = load_dataset("fancyzhx/ag_news")
 
@@ -65,6 +65,16 @@ model.load_state_dict(torch.load(weights_path))
 
 print(model)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 4. AUXILIARY DATASETS (unchanged)
+# ──────────────────────────────────────────────────────────────────────────────
+wiki_dataset  = load_dataset("wikipedia", "20220301.en", split="train[:2000]")
+squad_dataset = load_dataset("squad", split="validation")
+wiki_sample   = wiki_dataset.select(range(200))
+squad_sample  = squad_dataset.select(range(200))
+print("Auxiliary datasets loaded (Wiki + SQuAD).")
+
 from prettytable import PrettyTable
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.tensor")
@@ -74,7 +84,7 @@ mask_layer = 5
 compliment = True
 results_table = PrettyTable()
 if(compliment):
-   results_table.field_names = results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "Range Accuracy", "Range Confidence", "Range compliment acc", "Range compliment conf", "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
+   results_table.field_names = results_table.field_names = ["Class", "Base Accuracy", "Base Confidence", "Base Complement Acc", "Base Compliment Conf", "Range Accuracy", "Range Confidence", "Range compliment acc", "Range compliment conf", "Range Perplexity", "MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf", "Max Perplexity"]#, "Same as Max"]#"MAX Accuracy", "MAX Confidence", "Max compliment acc", "Max compliment conf"
 
 class_labels = []
 base_accuracies = []
@@ -137,6 +147,9 @@ tokenized_dataset = correct_dataset.train_test_split(
     seed=42        # for reproducibility
 )
 print(tokenized_dataset)
+
+base_lm = evaluate_llma_language_modeling(model, wiki_sample, tokenizer, max_samples=2000)
+aux_results.add_row(["Base (No Mask)", f"{base_lm['perplexity']:.4f}", "0%"])
 
 for j in range(0,num_classes):
     model = reset_llma(model)

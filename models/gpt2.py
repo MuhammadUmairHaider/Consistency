@@ -885,30 +885,8 @@ DEPARALLELIZE_DOCSTRING = r"""
 """
 
 
-# class MaskLayer(nn.Module):
-#     def __init__(self, lower_bound, upper_bound, replacement_values):
-#         super(MaskLayer, self).__init__()
-#         self.lower_bound = lower_bound
-#         self.upper_bound = upper_bound
-#         self.replacement_values = replacement_values
 
- 
-
-#     def forward(self, x):
-#         lower_bound = self.lower_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
-#         upper_bound = self.upper_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
-#         replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
-
- 
-
-#         mask = (x >= lower_bound) & (x <= upper_bound)
-#         x = torch.where(mask, replacement_values, x)
-#         return x
-    
-#     def set_perms(self,lower_bound, upper_bound, replacement_values):
-#         self.lower_bound = lower_bound
-#         self.upper_bound = upper_bound
-#         self.replacement_values = replacement_values
+#histogram implimentation
 
 import torch
 import torch.nn as nn
@@ -917,162 +895,652 @@ import numpy as np
 from scipy import stats
 import math
 
-class GaussianKDELayer(nn.Module):
-    def __init__(self, samples, bandwidth=None):
-        super().__init__()
+# class HistogramLayer(nn.Module):
+#     def __init__(self, samples, num_bins=100, min_val=None, max_val=None, smoothing=0.0):
+#         super().__init__()
         
-        if isinstance(samples, np.ndarray):
-            samples = torch.from_numpy(samples)
-        elif isinstance(samples, torch.Tensor):
-            samples = samples.detach()
+#         if isinstance(samples, np.ndarray):
+#             samples = torch.from_numpy(samples).float()
+#         elif isinstance(samples, torch.Tensor):
+#             samples = samples.detach().float()
             
-        # Register samples as buffer
-        self.register_buffer('samples', samples.float().view(-1, 1))
-        
-        # Compute or set bandwidth
-        if bandwidth is None:
-            # Scott's rule
-            n = len(samples)
-            bandwidth = n**(-1/5) * torch.std(samples)
-        
-        self.register_buffer('bandwidth', torch.tensor([bandwidth]).float())
-
-    def forward(self, x):
-        x = x.view(-1, 1)
-        dist = (x - self.samples.T)**2
-        kernel = torch.exp(-dist / (2 * self.bandwidth**2))
-        kde = kernel.mean(dim=1)
-        return kde / (self.bandwidth * math.sqrt(2 * math.pi))
-
-class MaskLayer(nn.Module):
-    def __init__(self, lower_bound, upper_bound, replacement_values):
-        super(MaskLayer, self).__init__()
-        self.lower_bound = lower_bound
-        self.upper_bound = upper_bound
-        self.replacement_values = replacement_values
-        
-        # Initialize KDE related attributes
-        self.kde_models_by_class = {}  # Dictionary to store KDEs for each class
-        self.kde_layers_by_class = nn.ModuleDict()  # Store GPU KDE layers
-        self.prob_threshold = None
-        self.use_probability = False
-        self.current_class = None
-        self.kde_layers = None
-
-    def fit_kde(self, activation_lists, threshold=0.3):
-        """
-        Set up KDE models for probability-based masking for each class
-        
-        Args:
-            activation_lists: List of tensors, shape [num_classes][num_examples, num_neurons]
-            threshold: Probability threshold for masking
-        """
-        num_classes = len(activation_lists)
-        feature_dim = activation_lists[0].shape[1]  # Should be 768
-        
-        # Fit KDE for each class separately
-        for class_idx in range(num_classes):
-            class_kdes = []  # CPU KDEs (keeping for backwards compatibility)
-            class_kde_layers = nn.ModuleList()  # GPU KDE layers
-            class_data = activation_lists[class_idx]
+#         # Determine range for bins
+#         if min_val is None:
+#             min_val = samples.min().item()
+#         if max_val is None:
+#             max_val = samples.max().item()
             
-            # For each neuron
-            for feat_idx in range(feature_dim):
-                # Get all examples for this neuron in this class
-                neuron_values = class_data[:, feat_idx]
-                if isinstance(neuron_values, torch.Tensor):
-                    neuron_values = neuron_values.detach().cpu().numpy()
+#         # Add a small margin to ensure all data fits within bins
+#         margin = 0.01 * (max_val - min_val)
+#         min_val -= margin
+#         max_val += margin
+        
+#         # Create bins
+#         bins = torch.linspace(min_val, max_val, num_bins + 1)
+        
+#         # Compute histogram
+#         hist = torch.histc(samples, bins=num_bins, min=min_val, max=max_val)
+        
+#         # Apply smoothing if requested (to avoid zero probabilities)
+#         if smoothing > 0:
+#             hist = hist + smoothing
+            
+#         # Normalize to get density
+#         density = hist / (hist.sum() * ((max_val - min_val) / num_bins))
+        
+#         # Register parameters
+#         self.register_buffer('bins', bins)
+#         self.register_buffer('bin_width', torch.tensor([(max_val - min_val) / num_bins]))
+#         self.register_buffer('density', density)
+#         self.register_buffer('min_val', torch.tensor([min_val]))
+#         self.register_buffer('max_val', torch.tensor([max_val]))
+        
+#     def forward(self, x):
+#         """
+#         Estimate density at points x using the histogram.
+        
+#         Args:
+#             x: Tensor of shape (...) containing points to evaluate
+            
+#         Returns:
+#             Tensor of shape (...) containing density estimates
+#         """
+#         x_flat = x.reshape(-1)
+        
+#         # Find which bin each point falls into
+#         bin_indices = torch.floor((x_flat - self.min_val) / self.bin_width).long()
+        
+#         # Clip indices to valid range
+#         bin_indices = torch.clamp(bin_indices, 0, len(self.density) - 1)
+        
+#         # Get density values for each point using indexing
+#         result = self.density[bin_indices]
+        
+#         # For points outside the range, return 0
+#         outside_range = (x_flat < self.min_val) | (x_flat > self.max_val)
+#         result[outside_range] = 0.0
+            
+#         return result.reshape(x.shape)
+
+
+# class VectorizedHistogramLayer(nn.Module):
+#     def __init__(self, feature_data, num_bins=100, min_vals=None, max_vals=None, smoothing=0.0):
+#         """
+#         Vectorized histogram layer that handles all features simultaneously
+        
+#         Args:
+#             feature_data: Tensor of shape [num_examples, num_features]
+#             num_bins: Number of bins for histograms
+#             min_vals: Optional tensor of min values for each feature [num_features]
+#             max_vals: Optional tensor of max values for each feature [num_features]
+#             smoothing: Small value to add to histogram counts (to avoid zeros)
+#         """
+#         super().__init__()
+        
+#         if isinstance(feature_data, np.ndarray):
+#             feature_data = torch.from_numpy(feature_data).float()
+#         elif isinstance(feature_data, torch.Tensor):
+#             feature_data = feature_data.detach().float()
+            
+#         num_features = feature_data.shape[1]
+        
+#         # Determine min/max values for each feature
+#         if min_vals is None:
+#             min_vals = torch.min(feature_data, dim=0)[0]
+#         if max_vals is None:
+#             max_vals = torch.max(feature_data, dim=0)[0]
+            
+#         # Add margin to ensure all data fits
+#         margin = 0.01 * (max_vals - min_vals)
+#         min_vals = min_vals - margin
+#         max_vals = max_vals + margin
+        
+#         # Calculate bin widths for each feature
+#         bin_widths = (max_vals - min_vals) / num_bins
+        
+#         # Initialize tensor to store densities for all features
+#         all_densities = torch.zeros(num_features, num_bins, dtype=torch.float32)
+        
+#         # Compute histograms for each feature
+#         for i in range(num_features):
+#             feature_values = feature_data[:, i]
+#             hist = torch.histc(feature_values, bins=num_bins, min=min_vals[i], max=max_vals[i])
+            
+#             # Apply smoothing
+#             if smoothing > 0:
+#                 hist = hist + smoothing
                 
-                # Fit CPU KDE for backwards compatibility
-                kde = stats.gaussian_kde(neuron_values)
-                class_kdes.append(kde)
-                
-                # Create GPU KDE layer
-                kde_layer = GaussianKDELayer(neuron_values)
-                class_kde_layers.append(kde_layer)
-            
-            self.kde_models_by_class[class_idx] = class_kdes
-            self.kde_layers_by_class[str(class_idx)] = class_kde_layers
+#             # Normalize to get density
+#             density = hist / (hist.sum() * (bin_widths[i]))
+#             all_densities[i] = density
         
-        self.prob_threshold = threshold
-        self.use_probability = True
-
-    def set_class(self, class_idx):
-        """Set which class's KDE to use for masking"""
-        if class_idx not in self.kde_models_by_class:
-            raise ValueError(f"No KDE models fitted for class {class_idx}")
-        self.current_class = class_idx
-        self.kde_models = self.kde_models_by_class[class_idx]
-        self.kde_layers = self.kde_layers_by_class[str(class_idx)]
-
-    def forward(self, x):
-        if not self.use_probability:
-            # Original bounds-based masking
-            lower_bound = self.lower_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
-            upper_bound = self.upper_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
-            replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
-            mask = (x >= lower_bound) & (x <= upper_bound)
-            x = torch.where(mask, replacement_values, x)
-            return x
-        else:
-            if self.current_class is None:
-                raise ValueError("Must call set_class before using probability-based masking")
-
-            batch_size, seq_len, feature_dim = x.shape
-            
-            # Process on GPU using KDE layers
-            x_flat = x.reshape(-1, feature_dim)
-            
-            # Calculate p(x|j) for current class j
-            p_x_given_j = torch.zeros(x_flat.shape[0], feature_dim, 
-                                  device=x.device, dtype=torch.float32)
-            
-            # Process features using GPU KDE layers for current class
-            for i, kde_layer in enumerate(self.kde_layers):
-                p_x_given_j[:, i] = kde_layer(x_flat[:, i])
-            
-            # Calculate sum of p(x|i) across all classes i
-            sum_p_x_given_i = torch.zeros_like(p_x_given_j)
-            
-            # For each class i
-            for class_idx in self.kde_models_by_class.keys():
-                # Get KDE layers for this class
-                class_kde_layers = self.kde_layers_by_class[str(class_idx)]
-                
-                # Calculate probabilities for this class
-                p_x_given_i = torch.zeros_like(p_x_given_j)
-                for i, kde_layer in enumerate(class_kde_layers):
-                    p_x_given_i[:, i] = kde_layer(x_flat[:, i])
-                
-                # Add to sum of p(x|i)
-                sum_p_x_given_i += p_x_given_i
-            
-            # Calculate p(x|j) / sum(p(x|i))
-            epsilon = 1e-10  # To avoid division by zero
-            normalized_probs = p_x_given_j / (sum_p_x_given_i + epsilon)
-            
-            # Reshape normalized probabilities back to original shape
-            normalized_probs = normalized_probs.reshape(batch_size, seq_len, feature_dim)
-            
-            # Create mask based on normalized probabilities
-            mask = (normalized_probs >= self.prob_threshold)
-            
-            # Apply mask using replacement values
-            replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
-            x = torch.where(mask, replacement_values, x)
-            
-            return x
-            
-    def set_perms(self, lower_bound, upper_bound, replacement_values):
-        """Set parameters and switch to bounds-based masking"""
-        self.lower_bound = lower_bound
-        self.upper_bound = upper_bound
-        self.replacement_values = replacement_values
-        self.use_probability = False
+#         # Register buffers
+#         self.register_buffer('min_vals', min_vals)
+#         self.register_buffer('max_vals', max_vals)
+#         self.register_buffer('bin_widths', bin_widths)
+#         self.register_buffer('densities', all_densities)
+#         self.num_bins = num_bins
+#         self.num_features = num_features
         
-    def set_probability_threshold(self, threshold):
-        """Update probability threshold"""
-        self.prob_threshold = threshold
+#     def forward(self, x):
+#         """
+#         Compute density estimates for all features simultaneously
+        
+#         Args:
+#             x: Tensor of shape [..., num_features]
+            
+#         Returns:
+#             Tensor of shape [..., num_features] containing density estimates
+#         """
+#         original_shape = x.shape
+#         # Reshape to [batch_size, num_features]
+#         x_reshaped = x.reshape(-1, self.num_features)
+        
+#         # Compute bin indices for all features simultaneously
+#         # [batch_size, num_features]
+#         bin_indices = torch.floor((x_reshaped - self.min_vals) / self.bin_widths).long()
+        
+#         # Clip indices to valid range
+#         bin_indices = torch.clamp(bin_indices, 0, self.num_bins - 1)
+        
+#         # Create result tensor
+#         results = torch.zeros_like(x_reshaped)
+        
+#         # This is the fully vectorized version - much faster with no loops
+#         for feat_idx in range(self.num_features):
+#             # Extract the bin indices for this feature across all batch items
+#             feat_bin_indices = bin_indices[:, feat_idx]
+            
+#             # Get the corresponding densities directly using advanced indexing
+#             results[:, feat_idx] = self.densities[feat_idx, feat_bin_indices]
+        
+#         # Handle out-of-range values
+#         out_of_range = (x_reshaped < self.min_vals) | (x_reshaped > self.max_vals)
+#         results[out_of_range] = 0.0
+        
+#         # Reshape back to original shape
+#         return results.reshape(original_shape)
+
+
+# class MaskLayer(nn.Module):
+#     def __init__(self, lower_bound, upper_bound, replacement_values):
+#         super(MaskLayer, self).__init__()
+#         self.lower_bound = lower_bound
+#         self.upper_bound = upper_bound
+#         self.replacement_values = replacement_values
+        
+#         # Initialize histogram related attributes
+#         self.hist_layers_by_class = nn.ModuleDict()  # Store vectorized histogram layers
+#         self.prob_threshold = None
+#         self.use_probability = False
+#         self.current_class = None
+#         self.current_hist_layer = None
+#         self.num_bins = 100
+
+#     def fit_histogram(self, activation_lists, threshold=0.3, num_bins=100):
+#         """
+#         Set up vectorized histogram models for probability-based masking for each class
+        
+#         Args:
+#             activation_lists: List of tensors, shape [num_classes][num_examples, num_features]
+#             threshold: Probability threshold for masking
+#             num_bins: Number of bins to use for histograms
+#         """
+#         self.num_bins = num_bins
+#         num_classes = len(activation_lists)
+        
+#         # Fit vectorized histogram for each class
+#         for class_idx in range(num_classes):
+#             class_data = activation_lists[class_idx]
+#             if isinstance(class_data, np.ndarray):
+#                 class_data = torch.from_numpy(class_data).float()
+#             elif isinstance(class_data, torch.Tensor):
+#                 class_data = class_data.detach().float()
+            
+#             # Create vectorized histogram layer for all features in this class
+#             hist_layer = VectorizedHistogramLayer(
+#                 class_data, 
+#                 num_bins=num_bins,
+#                 smoothing=1e-5  # Small smoothing to avoid zero probabilities
+#             )
+            
+#             self.hist_layers_by_class[str(class_idx)] = hist_layer
+        
+#         self.prob_threshold = threshold
+#         self.use_probability = True
+
+#     def set_class(self, class_idx):
+#         """Set which class's histogram to use for masking"""
+#         if str(class_idx) not in self.hist_layers_by_class:
+#             raise ValueError(f"No histogram models fitted for class {class_idx}")
+#         self.current_class = class_idx
+#         self.current_hist_layer = self.hist_layers_by_class[str(class_idx)]
+
+#     def forward(self, x):
+#         if not self.use_probability:
+#             # Original bounds-based masking
+#             lower_bound = self.lower_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             upper_bound = self.upper_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             mask = (x >= lower_bound) & (x <= upper_bound)
+#             x = torch.where(mask, replacement_values, x)
+#             return x
+#         else:
+#             if self.current_class is None:
+#                 raise ValueError("Must call set_class before using probability-based masking")
+
+#             batch_size, seq_len, feature_dim = x.shape
+            
+#             # Reshape to [batch_size*seq_len, feature_dim]
+#             x_reshaped = x.reshape(-1, feature_dim)
+            
+#             # Calculate p(x|j) for current class j
+#             p_x_given_j = self.current_hist_layer(x_reshaped)
+            
+#             # Calculate sum of p(x|i) across all classes i
+#             sum_p_x_given_i = torch.zeros_like(p_x_given_j)
+            
+#             # For each class i
+#             for class_idx in self.hist_layers_by_class:
+#                 # Get histogram layer for this class
+#                 class_hist_layer = self.hist_layers_by_class[class_idx]
+                
+#                 # Calculate probabilities for this class
+#                 p_x_given_i = class_hist_layer(x_reshaped)
+                
+#                 # Add to sum of p(x|i)
+#                 sum_p_x_given_i += p_x_given_i
+            
+#             # Calculate p(x|j) / sum(p(x|i))
+#             epsilon = 1e-10  # To avoid division by zero
+#             normalized_probs = p_x_given_j / (sum_p_x_given_i + epsilon)
+            
+#             # Reshape normalized probabilities back to original shape
+#             normalized_probs = normalized_probs.reshape(batch_size, seq_len, feature_dim)
+            
+#             # Create mask based on normalized probabilities
+#             mask = (normalized_probs >= self.prob_threshold)
+            
+#             # Apply mask using replacement values
+#             replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             x = torch.where(mask, replacement_values, x)
+            
+#             return x
+            
+#     def set_perms(self, lower_bound, upper_bound, replacement_values):
+#         """Set parameters and switch to bounds-based masking"""
+#         self.lower_bound = lower_bound
+#         self.upper_bound = upper_bound
+#         self.replacement_values = replacement_values
+#         self.use_probability = False
+        
+#     def set_probability_threshold(self, threshold):
+#         """Update probability threshold"""
+#         self.prob_threshold = threshold
+
+
+# import torch
+# import torch.nn as nn
+# import torch.nn.functional as F
+# import numpy as np
+# from scipy import stats
+# import math
+
+# class GaussianKDELayer(nn.Module):
+#     def __init__(self, samples, bandwidth=None):
+#         super().__init__()
+        
+#         if isinstance(samples, np.ndarray):
+#             samples = torch.from_numpy(samples)
+#         elif isinstance(samples, torch.Tensor):
+#             samples = samples.detach()
+            
+#         # Register samples as buffer
+#         self.register_buffer('samples', samples.float().view(-1, 1))
+        
+#         # Compute or set bandwidth
+#         if bandwidth is None:
+#             # Scott's rule
+#             n = len(samples)
+#             bandwidth = n**(-1/5) * torch.std(samples)
+        
+#         self.register_buffer('bandwidth', torch.tensor([bandwidth]).float())
+
+#     def forward(self, x):
+#         x = x.view(-1, 1)
+#         dist = (x - self.samples.T)**2
+#         kernel = torch.exp(-dist / (2 * self.bandwidth**2))
+#         kde = kernel.mean(dim=1)
+#         return kde / (self.bandwidth * math.sqrt(2 * math.pi))
+
+# class MaskLayer(nn.Module):
+#     def __init__(self, lower_bound, upper_bound, replacement_values):
+#         super(MaskLayer, self).__init__()
+#         self.lower_bound = lower_bound
+#         self.upper_bound = upper_bound
+#         self.replacement_values = replacement_values
+        
+#         # Initialize KDE related attributes
+#         self.kde_models_by_class = {}  # Dictionary to store KDEs for each class
+#         self.kde_layers_by_class = nn.ModuleDict()  # Store GPU KDE layers
+#         self.prob_threshold = None
+#         self.use_probability = False
+#         self.current_class = None
+#         self.kde_layers = None
+
+#     def fit_kde(self, activation_lists, threshold=0.3):
+#         """
+#         Set up KDE models for probability-based masking for each class
+        
+#         Args:
+#             activation_lists: List of tensors, shape [num_classes][num_examples, num_neurons]
+#             threshold: Probability threshold for masking
+#         """
+#         num_classes = len(activation_lists)
+#         feature_dim = activation_lists[0].shape[1]  # Should be 768
+        
+#         # Fit KDE for each class separately
+#         for class_idx in range(num_classes):
+#             class_kdes = []  # CPU KDEs (keeping for backwards compatibility)
+#             class_kde_layers = nn.ModuleList()  # GPU KDE layers
+#             class_data = activation_lists[class_idx]
+            
+#             # For each neuron
+#             for feat_idx in range(feature_dim):
+#                 # Get all examples for this neuron in this class
+#                 neuron_values = class_data[:, feat_idx]
+#                 if isinstance(neuron_values, torch.Tensor):
+#                     neuron_values = neuron_values.detach().cpu().numpy()
+                
+#                 # Fit CPU KDE for backwards compatibility
+#                 kde = stats.gaussian_kde(neuron_values)
+#                 class_kdes.append(kde)
+                
+#                 # Create GPU KDE layer
+#                 kde_layer = GaussianKDELayer(neuron_values)
+#                 class_kde_layers.append(kde_layer)
+            
+#             self.kde_models_by_class[class_idx] = class_kdes
+#             self.kde_layers_by_class[str(class_idx)] = class_kde_layers
+        
+#         self.prob_threshold = threshold
+#         self.use_probability = True
+
+#     def set_class(self, class_idx):
+#         """Set which class's KDE to use for masking"""
+#         if class_idx not in self.kde_models_by_class:
+#             raise ValueError(f"No KDE models fitted for class {class_idx}")
+#         self.current_class = class_idx
+#         self.kde_models = self.kde_models_by_class[class_idx]
+#         self.kde_layers = self.kde_layers_by_class[str(class_idx)]
+
+#     def forward(self, x):
+#         if not self.use_probability:
+#             # Original bounds-based masking
+#             lower_bound = self.lower_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             upper_bound = self.upper_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             mask = (x >= lower_bound) & (x <= upper_bound)
+#             x = torch.where(mask, replacement_values, x)
+#             return x
+#         else:
+#             if self.current_class is None:
+#                 raise ValueError("Must call set_class before using probability-based masking")
+
+#             batch_size, seq_len, feature_dim = x.shape
+            
+#             # Process on GPU using KDE layers
+#             x_flat = x.reshape(-1, feature_dim)
+            
+#             # Calculate p(x|j) for current class j
+#             p_x_given_j = torch.zeros(x_flat.shape[0], feature_dim, 
+#                                   device=x.device, dtype=torch.float32)
+            
+#             # Process features using GPU KDE layers for current class
+#             for i, kde_layer in enumerate(self.kde_layers):
+#                 p_x_given_j[:, i] = kde_layer(x_flat[:, i])
+            
+#             # Calculate sum of p(x|i) across all classes i
+#             sum_p_x_given_i = torch.zeros_like(p_x_given_j)
+            
+#             # For each class i
+#             for class_idx in self.kde_models_by_class.keys():
+#                 # Get KDE layers for this class
+#                 class_kde_layers = self.kde_layers_by_class[str(class_idx)]
+                
+#                 # Calculate probabilities for this class
+#                 p_x_given_i = torch.zeros_like(p_x_given_j)
+#                 for i, kde_layer in enumerate(class_kde_layers):
+#                     p_x_given_i[:, i] = kde_layer(x_flat[:, i])
+                
+#                 # Add to sum of p(x|i)
+#                 sum_p_x_given_i += p_x_given_i
+            
+#             # Calculate p(x|j) / sum(p(x|i))
+#             epsilon = 1e-10  # To avoid division by zero
+#             normalized_probs = p_x_given_j / (sum_p_x_given_i + epsilon)
+            
+#             # Reshape normalized probabilities back to original shape
+#             normalized_probs = normalized_probs.reshape(batch_size, seq_len, feature_dim)
+            
+#             # Create mask based on normalized probabilities
+#             mask = (normalized_probs >= self.prob_threshold)
+            
+#             # Apply mask using replacement values
+#             replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             x = torch.where(mask, replacement_values, x)
+            
+#             return x
+            
+#     def set_perms(self, lower_bound, upper_bound, replacement_values):
+#         """Set parameters and switch to bounds-based masking"""
+#         self.lower_bound = lower_bound
+#         self.upper_bound = upper_bound
+#         self.replacement_values = replacement_values
+#         self.use_probability = False
+        
+#     def set_probability_threshold(self, threshold):
+#         """Update probability threshold"""
+#         self.prob_threshold = threshold
+
+
+# import torch
+# import torch.nn as nn
+# import torch.nn.functional as F
+# import numpy as np
+# from scipy import stats
+# import math
+
+# class GaussianKDELayer(nn.Module):
+#     def __init__(self, samples, bandwidth=None):
+#         super().__init__()
+        
+#         if isinstance(samples, np.ndarray):
+#             samples = torch.from_numpy(samples)
+#         elif isinstance(samples, torch.Tensor):
+#             samples = samples.detach()
+            
+#         # Register samples as buffer
+#         self.register_buffer('samples', samples.float().view(-1, 1))
+        
+#         # Compute or set bandwidth
+#         if bandwidth is None:
+#             # Scott's rule
+#             n = len(samples)
+#             bandwidth = n**(-1/5) * torch.std(samples)
+        
+#         self.register_buffer('bandwidth', torch.tensor([bandwidth]).float())
+
+#     def forward(self, x):
+#         x = x.view(-1, 1)
+#         dist = (x - self.samples.T)**2
+#         kernel = torch.exp(-dist / (2 * self.bandwidth**2))
+#         kde = kernel.mean(dim=1)
+#         return kde / (self.bandwidth * math.sqrt(2 * math.pi))
+
+# class ParallelizedKDEProcessor(nn.Module):
+#     """Optimized KDE processor that balances speed and memory usage"""
+#     def __init__(self, kde_layers):
+#         super().__init__()
+#         self.kde_layers = nn.ModuleList(kde_layers)
+#         self.num_features = len(kde_layers)
+    
+#     def forward(self, x_flat):
+#         """
+#         Process KDEs for multiple features in a memory-efficient batched way
+        
+#         Args:
+#             x_flat: Input tensor of shape [batch_size, num_features]
+            
+#         Returns:
+#             Tensor of shape [batch_size, num_features] with KDE values
+#         """
+#         batch_size = x_flat.shape[0]
+#         results = torch.zeros(batch_size, self.num_features, device=x_flat.device)
+        
+#         # Process in chunks to balance memory and speed
+#         # This is still faster than a full loop but uses less memory than full batching
+#         chunk_size = min(128, self.num_features)  # Adjust this value based on your GPU memory
+        
+#         for chunk_start in range(0, self.num_features, chunk_size):
+#             chunk_end = min(chunk_start + chunk_size, self.num_features)
+#             chunk_indices = list(range(chunk_start, chunk_end))
+            
+#             # Extract the chunk of features we're processing
+#             chunk_x = x_flat[:, chunk_indices]
+            
+#             # Process each feature in this chunk
+#             for i, feat_idx in enumerate(chunk_indices):
+#                 results[:, feat_idx] = self.kde_layers[feat_idx](chunk_x[:, i])
+        
+#         return results
+
+# class MaskLayer(nn.Module):
+#     def __init__(self, lower_bound, upper_bound, replacement_values):
+#         super(MaskLayer, self).__init__()
+#         self.lower_bound = lower_bound
+#         self.upper_bound = upper_bound
+#         self.replacement_values = replacement_values
+        
+#         # Initialize KDE related attributes
+#         self.kde_models_by_class = {}  # Dictionary to store KDEs for each class
+#         self.kde_processors_by_class = nn.ModuleDict()  # Store optimized KDE processors
+#         self.prob_threshold = None
+#         self.use_probability = False
+#         self.current_class = None
+#         self.kde_processor = None
+
+#     def fit_kde(self, activation_lists, threshold=0.3):
+#         """
+#         Set up KDE models for probability-based masking for each class
+        
+#         Args:
+#             activation_lists: List of tensors, shape [num_classes][num_examples, num_neurons]
+#             threshold: Probability threshold for masking
+#         """
+#         num_classes = len(activation_lists)
+#         feature_dim = activation_lists[0].shape[1]
+        
+#         # Fit KDE for each class separately
+#         for class_idx in range(num_classes):
+#             class_kdes = []  # CPU KDEs (keeping for backwards compatibility)
+#             class_kde_layers = []  # GPU KDE layers
+#             class_data = activation_lists[class_idx]
+            
+#             # For each neuron
+#             for feat_idx in range(feature_dim):
+#                 # Get all examples for this neuron in this class
+#                 neuron_values = class_data[:, feat_idx]
+#                 if isinstance(neuron_values, torch.Tensor):
+#                     neuron_values = neuron_values.detach().cpu().numpy()
+                
+#                 # Fit CPU KDE for backwards compatibility
+#                 kde = stats.gaussian_kde(neuron_values)
+#                 class_kdes.append(kde)
+                
+#                 # Create GPU KDE layer
+#                 kde_layer = GaussianKDELayer(neuron_values)
+#                 class_kde_layers.append(kde_layer)
+            
+#             # Create a parallelized KDE processor for this class
+#             kde_processor = ParallelizedKDEProcessor(class_kde_layers)
+            
+#             self.kde_models_by_class[class_idx] = class_kdes
+#             self.kde_processors_by_class[str(class_idx)] = kde_processor
+        
+#         self.prob_threshold = threshold
+#         self.use_probability = True
+
+#     def set_class(self, class_idx):
+#         """Set which class's KDE to use for masking"""
+#         if class_idx not in self.kde_models_by_class:
+#             raise ValueError(f"No KDE models fitted for class {class_idx}")
+#         self.current_class = class_idx
+#         self.kde_models = self.kde_models_by_class[class_idx]
+#         self.kde_processor = self.kde_processors_by_class[str(class_idx)]
+
+#     def forward(self, x):
+#         if not self.use_probability:
+#             # Original bounds-based masking
+#             lower_bound = self.lower_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             upper_bound = self.upper_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             mask = (x >= lower_bound) & (x <= upper_bound)
+#             x = torch.where(mask, replacement_values, x)
+#             return x
+#         else:
+#             if self.current_class is None:
+#                 raise ValueError("Must call set_class before using probability-based masking")
+
+#             batch_size, seq_len, feature_dim = x.shape
+            
+#             # Process on GPU using optimized KDE processor
+#             x_flat = x.reshape(-1, feature_dim)
+            
+#             # Calculate p(x|j) for current class j using parallelized processing
+#             p_x_given_j = self.kde_processor(x_flat)
+            
+#             # Calculate sum of p(x|i) across all classes i
+#             sum_p_x_given_i = torch.zeros_like(p_x_given_j)
+            
+#             # For each class i
+#             for class_idx in self.kde_models_by_class.keys():
+#                 # Get KDE processor for this class
+#                 class_kde_processor = self.kde_processors_by_class[str(class_idx)]
+                
+#                 # Calculate probabilities for this class
+#                 p_x_given_i = class_kde_processor(x_flat)
+                
+#                 # Add to sum of p(x|i)
+#                 sum_p_x_given_i += p_x_given_i
+            
+#             # Calculate p(x|j) / sum(p(x|i))
+#             epsilon = 1e-10  # To avoid division by zero
+#             normalized_probs = p_x_given_j / (sum_p_x_given_i + epsilon)
+            
+#             # Reshape normalized probabilities back to original shape
+#             normalized_probs = normalized_probs.reshape(batch_size, seq_len, feature_dim)
+            
+#             # Create mask based on normalized probabilities
+#             mask = (normalized_probs >= self.prob_threshold)
+            
+#             # Apply mask using replacement values
+#             replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+#             x = torch.where(mask, replacement_values, x)
+            
+#             return x
+            
+#     def set_perms(self, lower_bound, upper_bound, replacement_values):
+#         """Set parameters and switch to bounds-based masking"""
+#         self.lower_bound = lower_bound
+#         self.upper_bound = upper_bound
+#         self.replacement_values = replacement_values
+#         self.use_probability = False
+        
+#     def set_probability_threshold(self, threshold):
+#         """Update probability threshold"""
+#         self.prob_threshold = threshold
+
         
         
 #vectorized form
@@ -1242,6 +1710,33 @@ class MaskLayer(nn.Module):
 #     def set_probability_threshold(self, threshold):
 #         """Update probability threshold"""
 #         self.prob_threshold = threshold
+
+
+
+class MaskLayer(nn.Module):
+    def __init__(self, lower_bound, upper_bound, replacement_values):
+        super(MaskLayer, self).__init__()
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.replacement_values = replacement_values
+
+ 
+
+    def forward(self, x):
+        lower_bound = self.lower_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+        upper_bound = self.upper_bound.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+        replacement_values = self.replacement_values.to(dtype=x.dtype, device=x.device).view(1, 1, -1)
+
+ 
+
+        mask = (x >= lower_bound) & (x <= upper_bound)
+        x = torch.where(mask, replacement_values, x)
+        return x
+    
+    def set_perms(self,lower_bound, upper_bound, replacement_values):
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.replacement_values = replacement_values
 
 @add_start_docstrings(
     "The bare GPT2 Model transformer outputting raw hidden-states without any specific head on top.",
