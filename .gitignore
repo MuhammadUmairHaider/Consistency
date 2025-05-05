@@ -6,8 +6,8 @@ model_weights/
 *.csv
 *.pkl
 gpt2-emotion-classification/
-!correct_predictions_dataset/
-!correct_predictions_dataset/*.json
+!llama_correct_datasets/
+!llama_correct_datasets/*.json
 logs/
 *.csv
 *.pyc
