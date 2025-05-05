@@ -11,6 +11,7 @@ logs/
 *.pyc
 results/
 /*.csv
+correct_predictions_dataset/
 *.safetensors
 *.pyc
 *.zip
